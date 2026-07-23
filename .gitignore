@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Tooling do Claude Code / spec-driven dev (nao faz parte da entrega)
+.claude/
+.specsmd/
+memory-bank/
