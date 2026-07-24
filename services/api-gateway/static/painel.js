@@ -149,6 +149,13 @@
     }
     // Alta/liberacao do leito derruba o monitoramento continuo; o resto so reflete o novo escore.
     verificarMonitores();
+    // Com o modo enfermaria armado, um leito que acabou de ficar ocupado ganha monitor sozinho --
+    // e o equivalente a prender o monitor no leito quando o paciente chega. O gatilho e o proprio
+    // evento da projecao, entao nao ha polling: a internacao publica, o SSE entrega, o monitor sobe.
+    if (enfermariaAtiva && card.estado === "ocupado" && !monitores.has(card.leito_id)) {
+      iniciarMonitor(card.leito_id, "estavel");
+      estadoSessao("Modo enfermaria: monitor ligado automaticamente em " + card.leito_id + ".", "ok");
+    }
     ultimoEvento("leito.atualizado", card.correlation_id);
   }
 
@@ -376,7 +383,7 @@
    "op-recarregar", "op-sessao-estado", "op-apikey", "op-nome", "op-documento", "op-nascimento",
    "op-sexo", "op-leito-livre", "op-admitir", "op-novo-nome", "op-leito-ocupado", "op-sequencia",
    "op-cancelar-sequencia", "op-progresso", "op-intervalo", "op-escalada", "op-continuo",
-   "op-parar-todos", "op-continuo-estado", "op-leito-alta", "op-motivo-alta", "op-alta",
+   "op-parar-todos", "op-enfermaria", "op-continuo-estado", "op-leito-alta", "op-motivo-alta", "op-alta",
    "op-log", "op-log-vazio", "op-limpar-log", "op-copiado"
   ].forEach(function (id) { el[id] = document.getElementById(id); });
 
@@ -874,6 +881,10 @@
 
   // leito_id -> monitor ativo. Map permite varios leitos evoluindo ao mesmo tempo no mural.
   var monitores = new Map();
+  // Teto da gravidade de um paciente estavel: mantem o NEWS2 na banda baixa (0-2) para sempre.
+  var TETO_GRAVIDADE_ESTAVEL = 0.12;
+  // Modo enfermaria ligado: todo leito que ficar ocupado ganha um monitor sozinho.
+  var enfermariaAtiva = false;
 
   /** Gerador pseudoaleatorio proprio (mulberry32) — nunca `Math.random`, para ser reprodutivel. */
   function criarRng(semente) {
@@ -1014,6 +1025,7 @@
   }
 
   function pararTodosMonitores(mensagem) {
+    enfermariaAtiva = false;
     Array.from(monitores.keys()).forEach(function (leito) { pararMonitor(leito, null); });
     if (mensagem) estadoSessao(mensagem, "neutro");
   }
@@ -1021,7 +1033,15 @@
   function passoMonitor(m) {
     if (!m.vivo || monitores.get(m.leito) !== m) return;
     var decorridoMs = Date.now() - m.inicio;
-    m.gravidade = Math.min(1, decorridoMs / m.escaladaMs);
+    if (m.perfil === "estavel") {
+      // Paciente estavel: a gravidade PASSEIA num intervalo baixo em vez de subir. Os numeros
+      // mudam a cada leitura (monitor ligado), mas o NEWS2 fica na banda baixa indefinidamente.
+      // E o que faz o card que evolui saltar aos olhos: uma parede verde e um card virando.
+      m.gravidade = Math.max(0, Math.min(TETO_GRAVIDADE_ESTAVEL,
+        m.gravidade + (m.rng() - 0.5) * 0.05));
+    } else {
+      m.gravidade = Math.min(1, decorridoMs / m.escaladaMs);
+    }
     m.leitura += 1;
 
     // Em intervalos curtos o sorteio pode repetir a leitura anterior; um unico resorteio garante
@@ -1048,8 +1068,9 @@
     });
   }
 
-  function iniciarMonitor(leito) {
+  function iniciarMonitor(leito, perfil) {
     if (monitores.has(leito)) return;
+    perfil = perfil === "estavel" ? "estavel" : "evolui";
     if (sequenciaAtiva && sequenciaAtiva.leito === leito) {
       pararSequencia("substituída pelo monitoramento contínuo");
     }
@@ -1057,6 +1078,7 @@
     var escaladaS = escaladaEscolhidaS();
     var m = {
       leito: leito,
+      perfil: perfil,
       inicio: Date.now(),
       intervaloMs: intervaloS * 1000,
       escaladaMs: escaladaS * 1000,
@@ -1086,6 +1108,54 @@
   }
 
   /** Alta ou desaparecimento do leito na projecao para o monitor com aviso explicito. */
+  /** Leitos ocupados conhecidos pela projecao, em ordem estavel. */
+  function leitosOcupados() {
+    var lista = [];
+    leitos.forEach(function (c) { if (c.estado === "ocupado") lista.push(c.leito_id); });
+    return lista.sort();
+  }
+
+  /**
+   * Liga um monitor em CADA leito ocupado, como a frota de monitores de uma enfermaria real, e
+   * deixa o modo armado: quem for internado depois ganha monitor sozinho (ver `aplicarLeito`).
+   *
+   * Um unico paciente recebe o perfil que evolui; os demais ficam estaveis. Todo mundo piorando ao
+   * mesmo tempo nao acontece num hospital e destroi a leitura da tela -- o efeito que interessa e
+   * um card virando vermelho no meio de uma parede verde.
+   */
+  function ligarEnfermaria() {
+    var ocupados = leitosOcupados();
+    if (!ocupados.length) {
+      estadoSessao("Nenhum leito ocupado: interne alguem em `2 Admitir paciente` antes.", "erro");
+      return;
+    }
+    enfermariaAtiva = true;
+    // O que evolui e o leito escolhido no select, se estiver ocupado; senao o primeiro da lista.
+    var alvo = el["op-leito-ocupado"] ? el["op-leito-ocupado"].value : "";
+    if (ocupados.indexOf(alvo) < 0) alvo = ocupados[0];
+    ocupados.forEach(function (leito) {
+      iniciarMonitor(leito, leito === alvo ? "evolui" : "estavel");
+    });
+    atualizarBotaoEnfermaria();
+    estadoSessao("Modo enfermaria: " + ocupados.length + " leito(s) monitorado(s); " + alvo +
+      " evolui e os demais ficam estaveis. Novas internacoes entram sozinhas.", "ok");
+  }
+
+  /** Desarma o modo e para todos os monitores. */
+  function desligarEnfermaria() {
+    enfermariaAtiva = false;
+    pararTodosMonitores("modo enfermaria desligado");
+    atualizarBotaoEnfermaria();
+  }
+
+  function atualizarBotaoEnfermaria() {
+    var b = el["op-enfermaria"];
+    if (!b) return;
+    b.textContent = enfermariaAtiva ? "Parar modo enfermaria" : "Modo enfermaria (todos os leitos)";
+    b.setAttribute("aria-pressed", enfermariaAtiva ? "true" : "false");
+    b.classList.toggle("btn--parar", enfermariaAtiva);
+  }
+
   function verificarMonitores() {
     if (!monitores || !monitores.size) return;
     Array.from(monitores.keys()).forEach(function (leito) {
@@ -1205,6 +1275,12 @@
     });
 
     el["op-continuo"].addEventListener("click", alternarMonitor);
+    if (el["op-enfermaria"]) {
+      el["op-enfermaria"].addEventListener("click", function () {
+        if (enfermariaAtiva) desligarEnfermaria(); else ligarEnfermaria();
+      });
+    }
+
     el["op-parar-todos"].addEventListener("click", function () {
       if (!monitores.size) return;
       pararTodosMonitores("Monitoramento contínuo parado em todos os leitos.");

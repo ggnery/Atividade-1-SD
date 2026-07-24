@@ -181,11 +181,22 @@
           <button id="op-parar-todos" type="button" class="btn btn--fantasma" disabled>Parar todos</button>
         </div>
 
+        <div class="op-botoes">
+          <button id="op-enfermaria" type="button" class="btn btn--secundario" aria-pressed="false">
+            Modo enfermaria (todos os leitos)
+          </button>
+        </div>
+
         <p id="op-continuo-estado" class="op-continuo" role="status" aria-live="polite">parado</p>
 
         <p class="op-dica">Publica <code>POST /sinais</code> a cada intervalo e <b>não termina
           sozinho</b>: os números mudam a cada leitura e a gravidade sobe devagar, atravessando
           <b>baixa → média → alta</b>. Vários leitos podem ser monitorados ao mesmo tempo.</p>
+
+        <p class="op-dica"><b>Modo enfermaria</b> liga um monitor em <b>cada leito ocupado</b>, como
+          num hospital de verdade — e em quem for internado depois, automaticamente. A maioria fica
+          <b>estável</b> e <b>um</b> paciente evolui: é o card que fica vermelho no meio de uma
+          parede verde.</p>
       </div>
     </section>
 

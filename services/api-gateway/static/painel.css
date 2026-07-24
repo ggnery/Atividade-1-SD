@@ -492,6 +492,15 @@ body {
 }
 .btn--primario:hover:not(:disabled) { filter: brightness(1.08); }
 
+/* Modo enfermaria: acao de escopo mais amplo que o monitoramento de um leito, entao ganha peso
+   proprio sem competir com o botao primario da secao. */
+.btn--secundario {
+  background: transparent;
+  border-color: var(--sev-baixa);
+  color: var(--sev-baixa);
+}
+.btn--secundario:hover:not(:disabled) { background: var(--baixa-bg); }
+
 /* Estado "ligado" do monitoramento continuo — o botao vira Parar (vermelho de severidade alta). */
 .btn--parar {
   background: var(--sev-alta);
