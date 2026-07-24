@@ -58,46 +58,46 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - Nenhum serviço da aplicação existe ainda; o middleware precisa estar verde sozinho
   - _Requirements: R2.2, R2.3, R2.4, R3.3, R10.3_
 
-- [ ] 4. Domínio e persistência
-- [ ] 4.1 Esquema do banco
+- [x] 4. Domínio e persistência
+- [x] 4.1 Esquema do banco
   - `db/schema.sql` idempotente: cinco schemas, papéis `svc_*` com GRANT/REVOKE, tabelas `pacientes`, `internacoes`, `leitos`, `sinais_vitais`, `alertas`, `eventos_auditoria`, `mensagens_processadas`, `outbox_mensagens`
   - Invariantes como barreira declarativa: índice único parcial de uma internação ativa por leito, triggers de imutabilidade, CHECK que codifica a regra do componente isolado
   - `db/seed.sql` com leitos, equipes e usuários fictícios
   - _Requirements: R6.1, R7.4, C6_
 
-- [ ] 4.2 Regra clínica NEWS2
+- [x] 4.2 Regra clínica NEWS2
   - Função pura `calcular_news2` com a tabela normativa como dado, sem dependência de framework
   - Agregação, classificação de severidade e a regra do componente isolado igual a 3
   - Faixas fisiológicas de validação de entrada
   - _Requirements: R6.2, R6.3, R6.6_
 
-- [ ] 4.3 Camada comum dos serviços
+- [x] 4.3 Camada comum dos serviços
   - `services/comum/`: sessão async do SQLAlchemy 2.0, bootstrap do app, `/health` e `/metrics` padronizados, transação que engloba efeito colateral e marca de idempotência
   - _Requirements: R2.4, R8.6, R5.5_
 
-- [ ] 5. Serviços da aplicação
-- [ ] 5.1 admission-service
+- [x] 5. Serviços da aplicação
+- [x] 5.1 admission-service
   - Modelos `Paciente`, `Internacao`, `Leito`; repositório; outbox transacional com relay
   - Operações RPC: `paciente.criar`, `paciente.buscar`, `internacao.admitir`, `internacao.dar-alta`, `internacao.detalhar`, `prontuario.consultar`, `leito.listar`
   - Emissão de `paciente.admitido`, `paciente.alta`, `leito.ocupado`, `leito.liberado`, `prontuario.consultado`
   - _Requirements: R7.2, R7.3, R7.5, R3.1_
 
-- [ ] 5.2 vitals-service
+- [x] 5.2 vitals-service
   - Consome `sinais.coletados`, valida faixa fisiológica, persiste `SinaisVitais`, publica `sinais.registrados`
   - Valor fora da faixa vira `PermanentError` com `sinais.rejeitados` e vai à DLQ
   - _Requirements: R6.1, R6.6_
 
-- [ ] 5.3 triage-service
+- [x] 5.3 triage-service
   - Consome `sinais.registrados`, aplica `calcular_news2`, publica `alerta.gerado` com severidade
   - _Requirements: R6.2, R6.3_
 
-- [ ] 5.4 alert-service
+- [x] 5.4 alert-service
   - Consome `alerta.gerado`, registra o `AlertaClinico`, despacha ao canal
   - `notificacao.py` como adapter sabotável por `ALERT_FAILURE_RATE`/`ALERT_FAILURE_LEITOS`; o handler não sabe da simulação e apenas levanta `TransientError`
   - Publica `alerta.notificado` ou `alerta.falhou`
   - _Requirements: R6.4, R6.5_
 
-- [ ] 5.5 audit-service
+- [x] 5.5 audit-service
   - Handler único com binding `#`, gravação somente-inserção na Trilha_de_Auditoria
   - _Requirements: R7.1, R7.3, R7.4_
 

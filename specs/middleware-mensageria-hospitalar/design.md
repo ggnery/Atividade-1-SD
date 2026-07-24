@@ -4697,7 +4697,7 @@ mesma fronteira da consulta de prontuário, usada em outro momento do ciclo de v
 | Publicar sinais vitais do `Cliente_Leito` | `Publisher.publish` + `202 Accepted` | alta frequência; RPC dobraria o tráfego e acoplaria o monitor à disponibilidade do serviço. É o **único** endpoint com `202` (5.1.3) |
 | Calcular NEWS2 e gerar alerta | evento `sinais.registrados` → `alerta.gerado` | ninguém está esperando a resposta; o fluxo é auto-corretivo e a próxima leitura o refaz |
 | Notificar a equipe do leito | evento `alerta.gerado` consumido pelo `alert-service` | precisa de retentativa 1s/2s/4s e DLQ (R6.5), que o RPC não oferece por decisão (5.6.1) |
-| Alimentar e consultar o `Painel_de_Leitos` | projeção em memória por consumo de eventos (R11.7) | um RPC por card por atualização derreteria a fila; a projeção já tem o dado. É por isso que `GET /leitos` e `GET /alertas` são `LOCAL` em 8.2.1 e **não** existe operação `leito.listar` |
+| Alimentar e consultar o `Painel_de_Leitos` | projeção em memória por consumo de eventos (R11.7) | um RPC por card por atualização derreteria a fila; a projeção já tem o dado. É por isso que `GET /leitos` e `GET /alertas` são `LOCAL` em 8.2.1; a única leitura RPC de leitos é `leitos.snapshot`, restrita à hidratação de boot do painel |
 | Gravar a Trilha_de_Auditoria | evento `prontuario.consultado` (R7.1, R7.3) | auditoria não pode estar no caminho crítico nem derrubar a consulta |
 | Busca textual de pacientes | não existe nesta entrega | não há endpoint correspondente em 8.2.1; uma operação RPC sem chamador seria código morto no catálogo |
 
@@ -6704,7 +6704,7 @@ porque o Cliente_Leito publica continuamente. Cada índice abaixo tem uma consul
 | `uq_internacoes_leito_ativo` | Não é para consulta: é o invariante INV-1 | R11.1 |
 | `uq_internacoes_paciente_ativo` | Invariante INV-6 | — |
 | `ix_internacoes_paciente_tempo` | Prontuário: internações de um paciente, mais recente primeiro | R7.2 |
-| `ix_internacoes_ativas` | RPC `leito.listar` com `status = "ocupado"` (catálogo de 5.8): enumera os leitos ocupados sem varrer o histórico de internações | R11.1 |
+| `ix_internacoes_ativas` | RPC `leitos.snapshot` com `status = "ocupado"` (catálogo de 5.8): enumera os leitos ocupados sem varrer o histórico de internações | R11.1 |
 | `ix_sv_internacao_coleta` | `... WHERE internacao_id = $1 ORDER BY coletado_em DESC LIMIT 1` — última leitura do leito, consulta mais frequente do sistema | R11.1 |
 | `ix_sv_correlation` | Depuração na demonstração: todas as leituras de um fluxo | R5.3 |
 | `uq_sv_origem` | Idempotência de segunda ordem e rastreio ao Envelope original | R2.4 |
@@ -7481,7 +7481,7 @@ tela, e as quatro alternativas avaliadas para reconstruí-la em uma evolução f
 e a limitação em aberto está registrada em 3.9-L6. Do ponto de vista **deste** capítulo o que
 importa é a consequência de modelagem: nenhuma tabela nova é criada para o gateway em 7.4, e nenhum
 índice de 7.4.7 existe para servir um *snapshot* de boot. O índice `ix_internacoes_ativas` serve à
-operação RPC `leito.listar` do catálogo de 5.8, que é consulta de usuário, não reconstrução de
+operação RPC `leitos.snapshot` do catálogo de 5.8, que é consulta de usuário, não reconstrução de
 projeção.
 
 #### 7.9.3 Como o ownership é verificado, não só documentado
@@ -7557,7 +7557,7 @@ flowchart TB
     ROT --> PROJ
     PUB -->|"publish assincrono"| BRK
     RPC -->|"call sincrono sobre fila"| BRK
-    RPC -->|"hidratacao no boot via leito.listar"| PROJ
+    RPC -->|"hidratacao no boot via leitos.snapshot"| PROJ
     BRK -->|"eventos de projecao"| CONS --> PROJ --> SSE --> NAV
     GW -.->|"proibido por design R7.2"| DB
 
@@ -7605,7 +7605,7 @@ async def ciclo_de_vida(app: FastAPI):
     await transporte.connect()
     await rpc.start()                                      # declara a fila de retorno exclusiva
     tarefa_projecao = asyncio.create_task(consumer.run())  # run() bloqueia: vai para uma task
-    await projecao.hidratar(rpc)                           # RPC leito.listar, ver 8.2.5
+    await projecao.hidratar(rpc)                           # RPC leitos.snapshot, ver 8.2.5
 
     app.state.publisher, app.state.rpc, app.state.projecao = publisher, rpc, projecao
     try:
@@ -7678,14 +7678,14 @@ fila e devolve 200/201; `LOCAL` = respondido pelo próprio processo, sem tocar o
 |---|---|---|---|---|---|---|---|---|
 | 1 | POST | `/auth/token` | nenhuma | — | `CredenciaisRequest {usuario, senha}` | `200` `TokenResponse {access_token, token_type, expires_in, role}` + cookie `hmq_session` | 401, 422 | LOCAL |
 | 2 | POST | `/pacientes` | JWT | `enfermeiro`, `admin` | `PacienteRequest {nome, documento, data_nascimento, sexo}` | `201` `PacienteResponse {paciente_id, nome, criado_em}` + `Location: /pacientes/{paciente_id}/prontuario` | 401, 403, 409, 422, 500, 503, 504 | RPC `paciente.criar` |
-| 3 | POST | `/internacoes` | JWT | `enfermeiro`, `admin` | `InternacaoRequest {paciente_id, leito_id, equipe_responsavel, motivo}` | `201` `InternacaoResponse {internacao_id, paciente_id, leito_id, setor, admitido_em}` + `Location: /internacoes/{internacao_id}` | 401, 403, 404, 409, 422, 500, 503, 504 | **RPC `internacao.admitir`** |
-| 4 | POST | `/internacoes/{internacao_id}/alta` | JWT | `medico`, `admin` | `AltaRequest {motivo, observacoes}` | `200` `AltaResponse {internacao_id, leito_id, alta_em, leito_liberado}` | 401, 403, 404, 409, 422, 500, 503, 504 | **RPC `internacao.dar-alta`** |
+| 3 | POST | `/internacoes` | JWT | `enfermeiro`, `admin` | `InternacaoRequest {paciente_id, leito_id, equipe_responsavel, motivo}` | `201` `InternacaoResponse {internacao_id, paciente_id, leito_id, setor, admitido_em}` + `Location: /internacoes/{internacao_id}` | 401, 403, 404, 409, 422, 500, 503, 504 | **RPC `paciente.admitir`** |
+| 4 | POST | `/internacoes/{internacao_id}/alta` | JWT | `medico`, `admin` | `AltaRequest {motivo, observacoes}` | `200` `AltaResponse {internacao_id, leito_id, alta_em, leito_liberado}` | 401, 403, 404, 409, 422, 500, 503, 504 | **RPC `paciente.dar-alta`** |
 | 5 | POST | `/sinais` | API Key | `dispositivo` | `SinaisVitaisRequest` (ver 8.2.3) | `202` `AceiteResponse` | 401, 403, 409, 422, 503 | ASSÍNC `sinais.coletados` |
-| 6 | GET | `/pacientes?nome=&pagina=&tamanho=` | JWT | `enfermeiro`, `medico`, `admin` | — | `200` `ListaPacientesResponse {total, resultados[]}` | 401, 403, 422, 500, 503, 504 | RPC `paciente.buscar` |
+| 6 | GET | `/pacientes/{paciente_id}` | JWT | `enfermeiro`, `medico`, `admin` | — | `200` `PacienteResponse` | 401, 403, 404, 500, 503, 504 | RPC `prontuario.consultar` (busca textual removida por 5.8.3) |
 | 7 | GET | `/pacientes/{paciente_id}/prontuario` | JWT | `enfermeiro`, `medico` | — | `200` `ProntuarioResponse {paciente, internacao_atual, ultimos_sinais[], alertas[]}` | 401, 403, 404, 500, 503, 504 | RPC `prontuario.consultar` |
-| 8 | GET | `/internacoes/{internacao_id}` | JWT | `medico`, `admin` | — | `200` `InternacaoDetalheResponse {internacao, leito, eventos[]}` | 401, 403, 404, 500, 503, 504 | RPC `internacao.detalhar` |
+| 8 | GET | `/internacoes/{internacao_id}` | JWT | `medico`, `admin` | — | `200` `InternacaoDetalheResponse {internacao, leito}` | 401, 403, 404, 500, 503, 504 | RPC `prontuario.consultar` (operação `prontuario.consultar` removida por 5.8.3) |
 | 9 | GET | `/alertas?severidade=&leito_id=&limite=` | JWT | `enfermeiro`, `medico`, `auditor`, `admin` | — | `200` `ListaAlertasResponse {itens[], total, origem:"projecao"}` | 401, 403, 422 | LOCAL (projeção) |
-| 10 | GET | `/leitos?fonte=projecao\|autoritativa` | JWT | `enfermeiro`, `medico`, `admin` | — | `200` `ListaLeitosResponse {itens[], atualizado_em, origem}` | 401, 403, 422, 503, 504 | LOCAL (projeção) por padrão · RPC `leito.listar` com `fonte=autoritativa` |
+| 10 | GET | `/leitos` | JWT | `enfermeiro`, `medico`, `admin` | — | `200` `ListaLeitosResponse {itens[], atualizado_em, origem:"projecao"}` | 401, 403, 503 | LOCAL (projeção); `leitos.snapshot` é usado só na hidratação de boot (R11.7) |
 | 11 | GET | `/health` | nenhuma | — | — | `200` `HealthResponse` (mesmo com Broker fora) | — | LOCAL |
 | 12 | GET | `/health/ready` | nenhuma | — | — | `200` pronto / `503` não pronto | 503 | LOCAL |
 | 13 | GET | `/metrics?format=json\|prometheus` | nenhuma (ou JWT `admin`/`auditor` se `HOSPITALMQ_METRICS_PROTEGIDO=true`) | — | — | `200` JSON ou `text/plain; version=0.0.4` | 401, 403 | LOCAL |
@@ -7709,12 +7709,12 @@ Todas as respostas — inclusive as de erro — carregam o cabeçalho `X-Correla
    gateway a decidir qual dos dois vale em caso de divergência.
 2. **`GET /painel/stream` é a rota canônica do SSE.** Menções a `/painel/eventos` designam esta rota.
 3. **`GET /leitos` responde da projeção por padrão** (R11.7 exige projeção em memória, não RPC por
-   card). O parâmetro `fonte=autoritativa` executa a operação RPC `leito.listar` do catálogo de 5.8
+   card). O parâmetro `fonte=autoritativa` executa a operação RPC `leitos.snapshot` do catálogo de 5.8
    e é o que o gateway usa internamente na hidratação de boot (8.2.5). *Justificativa:* reconcilia o
    catálogo RPC de 5.8 com R11.7 sem duplicar rota, e dá ao avaliador uma forma de comparar, lado a
    lado, o estado derivado e o estado autoritativo — demonstração direta do que é uma projeção.
 4. **Papéis.** O papel `recepcao` citado na coluna `role` de 5.8 não existe no vocabulário de papéis
-   de 8.3.1 (`enfermeiro`, `medico`, `auditor`, `dispositivo`, `admin`); `paciente.buscar` é exposta a
+   de 8.3.1 (`enfermeiro`, `medico`, `auditor`, `dispositivo`, `admin`); `prontuario.consultar` é exposta a
    `enfermeiro`, `medico` e `admin`.
 
 **Por que `/sinais` não aceita JWT de enfermeiro.** Telemetria é produzida por equipamento, não por
@@ -7877,8 +7877,8 @@ foi criada e em qual Leito, e pode falhar por conflito de ocupação, que o usu�
 | Operação RPC | Rota | Payload de entrada | Payload de resposta (`dados`) | Sucesso | Conflito |
 |---|---|---|---|---|---|
 | `paciente.criar` | `POST /pacientes` | `{"nome", "documento", "data_nascimento", "sexo"}` | `{"paciente_id", "nome", "criado_em"}` | `201` + `Location` | `409` `DOCUMENTO_DUPLICADO` |
-| `internacao.admitir` | `POST /internacoes` | `{"paciente_id", "leito_id", "equipe_responsavel", "motivo"}` | `{"internacao_id", "paciente_id", "leito_id", "setor", "admitido_em"}` | `201` + `Location: /internacoes/{internacao_id}` | `409` `LEITO_OCUPADO` (INV-1) ou `PACIENTE_JA_INTERNADO` (INV-6) |
-| `internacao.dar-alta` | `POST /internacoes/{internacao_id}/alta` | `{"internacao_id", "motivo", "observacoes"}` | `{"internacao_id", "leito_id", "alta_em", "leito_liberado"}` | `200` | `409` `INTERNACAO_JA_ENCERRADA` |
+| `paciente.admitir` | `POST /internacoes` | `{"paciente_id", "leito_id", "equipe_responsavel", "motivo"}` | `{"internacao_id", "paciente_id", "leito_id", "setor", "admitido_em"}` | `201` + `Location: /internacoes/{internacao_id}` | `409` `LEITO_OCUPADO` (INV-1) ou `PACIENTE_JA_INTERNADO` (INV-6) |
+| `paciente.dar-alta` | `POST /internacoes/{internacao_id}/alta` | `{"internacao_id", "motivo", "observacoes"}` | `{"internacao_id", "leito_id", "alta_em", "leito_liberado"}` | `200` | `409` `INTERNACAO_JA_ENCERRADA` |
 
 As três operações são roteadas para `rpc.admission` — isto é, entram no `ROTAS_RPC` de 5.4.1 ao lado
 das quatro operações de leitura:
@@ -7888,13 +7888,13 @@ das quatro operações de leitura:
 ROTAS_RPC: dict[str, str] = {
     # leituras
     "prontuario.consultar":  "rpc.admission",
-    "paciente.buscar":       "rpc.admission",
-    "leito.listar":          "rpc.admission",
-    "internacao.detalhar":   "rpc.admission",
+    "prontuario.consultar":       "rpc.admission",
+    "leitos.snapshot":          "rpc.admission",
+    "prontuario.consultar":   "rpc.admission",
     # escritas (ADR-019)
     "paciente.criar":        "rpc.admission",
-    "internacao.admitir":    "rpc.admission",
-    "internacao.dar-alta":   "rpc.admission",
+    "paciente.admitir":    "rpc.admission",
+    "paciente.dar-alta":   "rpc.admission",
 }
 ```
 
@@ -7909,7 +7909,7 @@ async def admitir(corpo: InternacaoRequest, resposta: Response,
                   identidade: Identity = Depends(exigir_papel("enfermeiro", "admin")),
                   rpc: RpcClient = Depends(obter_rpc),
                   projecao: ProjecaoLeitos = Depends(obter_projecao)) -> InternacaoResponse:
-    dados = await rpc.call("internacao.admitir", corpo.model_dump(mode="json"),
+    dados = await rpc.call("paciente.admitir", corpo.model_dump(mode="json"),
                            identity=identidade, timeout=5.0)   # RpcRemoteError -> 404/409 (8.4.1)
     saida = InternacaoResponse.model_validate(dados)
     projecao.aplicar_admissao(saida)                            # fecha a janela de corrida (8.2.5)
@@ -7929,7 +7929,7 @@ sequenceDiagram
     participant AU as audit-service
 
     E->>G: POST /internacoes com JWT
-    G->>B: hospital.rpc rk admission - type internacao.admitir
+    G->>B: hospital.rpc rk admission - type paciente.admitir
     B->>A: entrega em q.rpc.admission
     A->>DB: INSERT em clinico.internacoes protegido por INV-1 e INV-6
     alt leito livre
@@ -8006,7 +8006,7 @@ async def resolver_internacao(corpo: SinaisVitaisRequest, projecao: ProjecaoLeit
 
     card = projecao.leito(corpo.leito_id)
     if card is None and not projecao.hidratada:          # boot ainda nao reconciliado
-        card = await projecao.hidratar_leito(rpc, corpo.leito_id)   # RPC leito.listar, 5 s
+        card = await projecao.hidratar_leito(rpc, corpo.leito_id)   # RPC leitos.snapshot, 5 s
 
     if card is None or card.estado != "ocupado" or card.internacao_id is None:
         raise LeitoNaoOcupado(corpo.leito_id)            # -> 409 leito-nao-ocupado (8.4.1)
@@ -8018,11 +8018,11 @@ async def resolver_internacao(corpo: SinaisVitaisRequest, projecao: ProjecaoLeit
 | Leito ocupado na projeção | `202` com o evento publicado | Caminho feliz |
 | `internacao_id` explícito no corpo | `202`, sem consultar a projeção | Permite reprocessar uma leitura antiga e escrever testes determinísticos |
 | Leito desconhecido ou livre na projeção **já hidratada** | `409` `leito-nao-ocupado` | Leitura órfã não tem contexto clínico (D2 de 7.3.2). Rejeitar na borda é melhor que publicar e ver o `vitals-service` mandar para a DLQ: o monitor recebe a causa imediatamente |
-| Projeção não hidratada e RPC `leito.listar` indisponível | `503` `broker-indisponivel` com `Retry-After: 5` | O gateway **não sabe** se o leito está ocupado; responder 409 seria afirmar algo falso. 503 é honesto e o cliente reenvia (R8.5) |
+| Projeção não hidratada e RPC `leitos.snapshot` indisponível | `503` `broker-indisponivel` com `Retry-After: 5` | O gateway **não sabe** se o leito está ocupado; responder 409 seria afirmar algo falso. 503 é honesto e o cliente reenvia (R8.5) |
 | Admissão feita há milissegundos, evento ainda em trânsito | `202` | A aplicação otimista de 8.2.4 já gravou o card na projeção |
 
 **Hidratação no boot.** Na subida, `ProjecaoLeitos.hidratar(rpc)` executa **uma** chamada
-`leito.listar` (catálogo de 5.8) e marca `hidratada = True`. Se o `admission-service` estiver fora, a
+`leitos.snapshot` (catálogo de 5.8) e marca `hidratada = True`. Se o `admission-service` estiver fora, a
 flag permanece `False`, o gateway sobe assim mesmo (R8.5: `/health` continua respondendo) e cada
 resolução tenta uma hidratação pontual do leito pedido. *Justificativa:* elimina a janela em que a
 projeção recém-nascida (8.7.6) recusaria leituras de leitos legitimamente ocupados, **sem** violar
@@ -8455,7 +8455,7 @@ async def publicar_sinais(...) -> AceiteResponse: ...
 2. *Authorize* → `BearerJWT` → colar o token → *Authorize*.
 3. `POST /pacientes` → 201 com `paciente_id` (RPC `paciente.criar`).
 4. `POST /internacoes` com esse `paciente_id` e `leito_id: "UTI-03"` → **201** com `internacao_id`,
-   `Location` e `correlation_id` (RPC `internacao.admitir`).
+   `Location` e `correlation_id` (RPC `paciente.admitir`).
 5. Repetir o passo 4 com outro paciente no **mesmo leito** → **409** `leito-ocupado` (exemplo de 8.4.3):
    a prova visual de INV-1.
 6. *Authorize* → `ApiKeyDispositivo` → colar `dev-uti-03-7f2a` → `POST /sinais` no leito `UTI-03` →
@@ -8486,7 +8486,7 @@ do navegador.
     "tentativas_reconexao": 7
   },
   "projecao": {
-    "hidratada": true,                   // hidratacao por RPC leito.listar no boot (8.2.5)
+    "hidratada": true,                   // hidratacao por RPC leitos.snapshot no boot (8.2.5)
     "leitos": 6,
     "alertas": 3,
     "ultimo_evento_em": "2026-07-27T14:05:47.930Z"
@@ -8667,7 +8667,7 @@ class ProjecaoLeitos:
     _alertas: deque[AlertaPainel]                    # maxlen = 50, mais recente a esquerda
     _assinantes: set[asyncio.Queue[str]]             # uma fila por conexao SSE
     _ultimo_id: int                                  # id incremental do evento SSE
-    hidratada: bool                                  # 8.2.5: leito.listar concluido no boot
+    hidratada: bool                                  # 8.2.5: leitos.snapshot concluido no boot
 
     async def aplicar(self, ctx: "MessageContext") -> None:
         """Handler do Consumer. Muta o estado e difunde aos assinantes (R11.2).
@@ -8679,10 +8679,10 @@ class ProjecaoLeitos:
         """Consulta O(1) usada pela resolucao de internacao_id (8.2.5)."""
 
     def aplicar_admissao(self, resposta: "InternacaoResponse") -> None:
-        """Escrita otimista com a resposta do RPC internacao.admitir (8.2.4)."""
+        """Escrita otimista com a resposta do RPC paciente.admitir (8.2.4)."""
 
     async def hidratar(self, rpc: "RpcClient") -> None:
-        """Uma chamada leito.listar no boot; define hidratada=True em caso de sucesso."""
+        """Uma chamada leitos.snapshot no boot; define hidratada=True em caso de sucesso."""
 
     async def hidratar_leito(self, rpc: "RpcClient", leito_id: str) -> CardLeito | None:
         """Hidratacao pontual quando a projecao ainda nao esta reconciliada."""
@@ -8841,7 +8841,7 @@ seria observável em três lugares: `/painel`, `GET /leitos` e — mais grave �
 `internacao_id` de 8.2.5, que passaria a responder 409 para leitos legitimamente ocupados.
 
 **Mitigação adotada: hidratação por RPC no boot.** Em `ciclo_de_vida`, antes de aceitar tráfego, o
-gateway executa `leito.listar` (catálogo de 5.8) e reconstrói o `estado`, o `paciente_id` e o
+gateway executa `leitos.snapshot` (catálogo de 5.8) e reconstrói o `estado`, o `paciente_id` e o
 `internacao_id` de cada leito ocupado. O que **não** volta é o histórico volátil: últimos sinais,
 escores e a lista de alertas recentes, que reaparecem na primeira publicação seguinte.
 
@@ -8857,7 +8857,7 @@ confirmadas não podem ser relidas, não existe *offset* como em um log.
 
 | Como resolveria | Mecanismo | Custo | Avaliação |
 |---|---|---|---|
-| **Hidratação por RPC `leito.listar`** | uma chamada no *startup*, reusando operação já existente no catálogo | uma ida ao `admission-service` por boot; não recupera sinais nem alertas | **adotada** — resolve a parte do estado que tem consequência funcional (a resolução de `internacao_id`) e mantém R7.2, pois o dado vem por RPC, não do banco |
+| **Hidratação por RPC `leitos.snapshot`** | uma chamada no *startup*, reusando operação já existente no catálogo | uma ida ao `admission-service` por boot; não recupera sinais nem alertas | **adotada** — resolve a parte do estado que tem consequência funcional (a resolução de `internacao_id`) e mantém R7.2, pois o dado vem por RPC, não do banco |
 | **Replay pela Trilha_de_Auditoria** | no *startup*, RPC `eventos.desde(timestamp)` ao `audit-service` e reaplicação dos eventos na projeção | reusa o que já existe; exige nova operação RPC e paginação | **preferida como evolução** — é reconstrução de projeção clássica de *event sourcing*, recupera também sinais e alertas e mantém R7.2 |
 | **RabbitMQ Streams** | trocar `q.gateway.projecao` por um *stream* (log append-only do RabbitMQ 3.13) e consumir com `offset=first` | já disponível na versão adotada; muda a declaração da fila e exige retenção configurada | boa evolução; introduz um segundo modelo de fila no projeto |
 | **Snapshot periódico** | serializar a projeção a cada 30 s em arquivo/Redis e recarregar no *startup* | trivial de implementar | dado defasado e mais um componente de estado a operar |
