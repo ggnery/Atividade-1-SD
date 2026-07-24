@@ -18,6 +18,8 @@
       <span class="contador">leitos <b id="n-leitos">0</b></span>
       <span class="contador">alertas <b id="n-alertas">0</b></span>
       <time id="relogio" aria-label="Hora atual">--:--:--</time>
+      <button id="btn-operar" type="button" class="btn btn--primario"
+              aria-expanded="false" aria-controls="console">Operar</button>
     </div>
   </header>
 
@@ -32,6 +34,160 @@
       <p id="alertas-vazio" class="vazio">Nenhum alerta ainda.</p>
     </aside>
   </main>
+
+  <!-- =============================== Console de Operacao (gaveta retratil) -->
+  <aside id="console" class="console" aria-label="Console de operação">
+    <div class="console__topo">
+      <h2>Console de operação</h2>
+      <button id="op-fechar" type="button" class="btn btn--fantasma">Fechar</button>
+    </div>
+
+    <!-- 1. Sessao ---------------------------------------------------------->
+    <section class="op-secao" aria-labelledby="op-h-sessao">
+      <h3 id="op-h-sessao"><span class="op-num">1</span> Sessão</h3>
+
+      <div class="op-grade-2">
+        <p class="campo">
+          <label for="op-usuario">Usuário</label>
+          <input id="op-usuario" name="op-usuario" type="text" value="enf.ana" autocomplete="username" spellcheck="false">
+        </p>
+        <p class="campo">
+          <label for="op-senha">Senha</label>
+          <input id="op-senha" name="op-senha" type="password" value="demo123" autocomplete="current-password">
+        </p>
+      </div>
+
+      <div class="op-botoes">
+        <button id="op-entrar" type="button" class="btn btn--primario">Entrar</button>
+        <button id="op-sair" type="button" class="btn btn--fantasma">Sair</button>
+        <button id="op-recarregar" type="button" class="btn btn--fantasma">Recarregar leitos</button>
+      </div>
+
+      <p id="op-sessao-estado" class="op-estado op-estado--neutro" role="status">
+        Sem sessão. Entre para habilitar as ações.
+      </p>
+
+      <fieldset class="op-papeis">
+        <legend>Troca rápida de papel</legend>
+        <div class="op-botoes">
+          <button type="button" class="btn btn--chip" data-usuario="enf.ana">enf.ana · enfermeiro</button>
+          <button type="button" class="btn btn--chip" data-usuario="med.silva">med.silva · médico</button>
+          <button type="button" class="btn btn--chip" data-usuario="aud.paula">aud.paula · auditor</button>
+        </div>
+        <p class="op-dica">O auditor recebe <b>403</b> ao admitir ou dar alta — é a demonstração de R4.4.</p>
+      </fieldset>
+
+      <p class="campo">
+        <label for="op-apikey">API Key do dispositivo (cabeçalho X-API-Key)</label>
+        <input id="op-apikey" name="op-apikey" type="text" value="dev-monitor-l07" spellcheck="false">
+      </p>
+      <p class="op-dica">Telemetria (<code>POST /sinais</code>) usa API Key, nunca JWT (R4.5).</p>
+    </section>
+
+    <!-- 2. Admitir paciente ------------------------------------------------>
+    <section class="op-secao" aria-labelledby="op-h-admitir">
+      <h3 id="op-h-admitir"><span class="op-num">2</span> Admitir paciente</h3>
+
+      <p class="campo">
+        <label for="op-nome">Nome do paciente</label>
+        <input id="op-nome" name="op-nome" type="text" value="">
+      </p>
+
+      <div class="op-grade-2">
+        <p class="campo">
+          <label for="op-documento">Documento</label>
+          <input id="op-documento" name="op-documento" type="text" value="" spellcheck="false">
+        </p>
+        <p class="campo">
+          <label for="op-nascimento">Data de nascimento</label>
+          <input id="op-nascimento" name="op-nascimento" type="date" value="1980-05-12">
+        </p>
+      </div>
+
+      <div class="op-grade-2">
+        <p class="campo">
+          <label for="op-sexo">Sexo</label>
+          <select id="op-sexo" name="op-sexo">
+            <option value="F">F</option>
+            <option value="M">M</option>
+            <option value="O">O</option>
+          </select>
+        </p>
+        <p class="campo">
+          <label for="op-leito-livre">Leito livre</label>
+          <select id="op-leito-livre" name="op-leito-livre">
+            <option value="">— sem leitos livres —</option>
+          </select>
+        </p>
+      </div>
+
+      <div class="op-botoes">
+        <button id="op-admitir" type="button" class="btn btn--primario">Admitir</button>
+        <button id="op-novo-nome" type="button" class="btn btn--fantasma">Sortear paciente</button>
+      </div>
+      <p class="op-dica">Duas chamadas em sequência: <code>POST /pacientes</code> → <code>POST /internacoes</code>.</p>
+    </section>
+
+    <!-- 3. Sinais vitais --------------------------------------------------->
+    <section class="op-secao" aria-labelledby="op-h-sinais">
+      <h3 id="op-h-sinais"><span class="op-num">3</span> Publicar sinais vitais</h3>
+
+      <p class="campo">
+        <label for="op-leito-ocupado">Leito ocupado</label>
+        <select id="op-leito-ocupado" name="op-leito-ocupado">
+          <option value="">— sem leitos ocupados —</option>
+        </select>
+      </p>
+
+      <div class="op-botoes op-presets">
+        <button type="button" class="btn btn--preset preset--baixa" data-preset="estavel">Estável <span class="preset__nota">NEWS2 0</span></button>
+        <button type="button" class="btn btn--preset preset--media" data-preset="atencao">Atenção <span class="preset__nota">NEWS2 3</span></button>
+        <button type="button" class="btn btn--preset preset--alta" data-preset="critico">Crítico <span class="preset__nota">NEWS2 ≥ 7 · alerta</span></button>
+        <button type="button" class="btn btn--preset preset--rejeitado" data-preset="fora-de-faixa">Fora de faixa <span class="preset__nota">SpO₂ 20 · DLQ</span></button>
+      </div>
+
+      <div class="op-botoes">
+        <button id="op-sequencia" type="button" class="btn btn--primario">Sequência de deterioração</button>
+        <button id="op-cancelar-sequencia" type="button" class="btn btn--fantasma" disabled>Cancelar</button>
+        <span id="op-progresso" class="op-progresso" role="status" aria-live="polite"></span>
+      </div>
+      <p class="op-dica">A borda aceita <code>SpO₂ = 20</code> (202); o vitals-service recusa como
+        <b>PermanentError</b> e envia para a DLQ sem retentativa (R6.6).</p>
+    </section>
+
+    <!-- 4. Alta ------------------------------------------------------------>
+    <section class="op-secao" aria-labelledby="op-h-alta">
+      <h3 id="op-h-alta"><span class="op-num">4</span> Dar alta</h3>
+
+      <p class="campo">
+        <label for="op-leito-alta">Leito ocupado</label>
+        <select id="op-leito-alta" name="op-leito-alta">
+          <option value="">— sem leitos ocupados —</option>
+        </select>
+      </p>
+      <p class="campo">
+        <label for="op-motivo-alta">Motivo</label>
+        <input id="op-motivo-alta" name="op-motivo-alta" type="text" value="Alta médica">
+      </p>
+      <div class="op-botoes">
+        <button id="op-alta" type="button" class="btn btn--primario">Dar alta</button>
+      </div>
+      <p class="op-dica">Exige papel <b>médico</b> ou <b>admin</b>: enfermeiro e auditor recebem 403.</p>
+    </section>
+
+    <!-- 5. Log ------------------------------------------------------------->
+    <section class="op-secao op-secao--log" aria-labelledby="op-h-log">
+      <h3 id="op-h-log"><span class="op-num">5</span> Log de ações</h3>
+      <div class="op-botoes">
+        <button id="op-limpar-log" type="button" class="btn btn--fantasma">Limpar log</button>
+        <span id="op-copiado" class="op-copiado" role="status" aria-live="polite"></span>
+      </div>
+      <p class="op-dica">Clique no <code>correlation_id</code> para copiar e receber o comando
+        <code>./scripts/trace.sh &lt;cid&gt;</code>.</p>
+      <ol id="op-log" class="op-log" aria-live="polite" aria-label="Últimas chamadas HTTP"></ol>
+      <p id="op-log-vazio" class="vazio">Nenhuma chamada ainda.</p>
+    </section>
+  </aside>
 
   <footer id="rodape">
     <span id="aviso-hidratacao" class="aviso" hidden></span>

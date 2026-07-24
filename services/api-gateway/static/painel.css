@@ -443,3 +443,379 @@ body {
   color: var(--sev-media);
   font-weight: 600;
 }
+
+/* ======================================================================== */
+/* Console de Operacao — gaveta retratil (mesma pagina, sem framework)      */
+/* ======================================================================== */
+
+/* ---------------------------------------------------------------- Botoes */
+
+.btn {
+  font-family: inherit;
+  font-size: .85rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: .42rem .7rem;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--superficie-2);
+  color: var(--texto);
+  cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+
+.btn:hover:not(:disabled) { border-color: var(--texto-fraco); }
+
+.btn:focus-visible,
+.campo input:focus-visible,
+.campo select:focus-visible,
+.op-cid:focus-visible {
+  outline: 3px solid var(--sev-media);
+  outline-offset: 2px;
+}
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn--primario {
+  background: var(--sev-baixa);
+  border-color: var(--sev-baixa);
+  color: #fff;
+}
+.btn--primario:hover:not(:disabled) { filter: brightness(1.08); }
+
+.btn--fantasma { background: transparent; }
+
+.btn--chip {
+  font-size: .78rem;
+  font-family: var(--mono);
+  padding: .3rem .55rem;
+}
+.btn--chip[aria-pressed="true"] {
+  border-color: var(--sev-baixa);
+  background: var(--baixa-bg);
+  color: var(--texto);
+}
+
+.btn--preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .12rem;
+  flex: 1 1 8.5rem;
+  text-align: left;
+  border-left-width: 4px;
+}
+.preset__nota {
+  font-size: .68rem;
+  font-weight: 500;
+  color: var(--texto-fraco);
+}
+.preset--baixa { border-left-color: var(--sev-baixa); }
+.preset--media { border-left-color: var(--sev-media); }
+.preset--alta { border-left-color: var(--sev-alta); }
+.preset--rejeitado { border-left-color: var(--texto-fraco); border-left-style: dashed; }
+
+/* ---------------------------------------------------------------- Gaveta */
+
+.console {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 50;
+  width: min(430px, 100%);
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: .9rem 1rem 2.5rem;
+  background: var(--superficie);
+  border-left: 1px solid var(--borda);
+  box-shadow: -8px 0 24px rgba(15, 23, 42, .18);
+  transform: translateX(101%);
+  visibility: hidden;
+  transition: transform .22s ease, visibility 0s linear .22s;
+}
+
+body.console-aberto .console {
+  transform: none;
+  visibility: visible;
+  transition: transform .22s ease, visibility 0s;
+}
+
+/* Empurra o mural em telas largas para a gaveta nao cobrir os cards. */
+@media (min-width: 1100px) {
+  body { transition: margin-right .22s ease; }
+  body.console-aberto { margin-right: min(430px, 100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console, body { transition: none; }
+}
+
+.console__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--borda);
+  position: sticky;
+  top: -.9rem;
+  margin: -.9rem -1rem .8rem;
+  padding: .9rem 1rem .6rem;
+  background: var(--superficie);
+  z-index: 2;
+}
+
+.console__topo h2 {
+  margin: 0;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--texto-suave);
+}
+
+/* --------------------------------------------------------------- Secoes */
+
+.op-secao {
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  background: var(--superficie-2);
+  padding: .7rem .75rem;
+  margin-bottom: .8rem;
+}
+
+.op-secao h3 {
+  margin: 0 0 .6rem;
+  font-size: .88rem;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--texto-suave);
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+}
+
+.op-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: var(--normal-bg);
+  border: 1px solid var(--borda);
+  color: var(--texto);
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.op-grade-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .5rem;
+}
+
+@media (max-width: 420px) {
+  .op-grade-2 { grid-template-columns: 1fr; }
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  margin: 0 0 .55rem;
+}
+
+.campo label {
+  font-size: .74rem;
+  font-weight: 600;
+  color: var(--texto-suave);
+  letter-spacing: .2px;
+}
+
+.campo input,
+.campo select {
+  font-family: inherit;
+  font-size: .88rem;
+  padding: .38rem .5rem;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--superficie);
+  color: var(--texto);
+  width: 100%;
+  min-width: 0;
+}
+
+.op-botoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+  margin-bottom: .5rem;
+}
+
+.op-presets { gap: .45rem; }
+
+.op-papeis {
+  border: 1px dashed var(--borda);
+  border-radius: 9px;
+  padding: .5rem .6rem .1rem;
+  margin: 0 0 .6rem;
+}
+
+.op-papeis legend {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--texto-fraco);
+  padding: 0 .3rem;
+}
+
+.op-dica {
+  margin: 0 0 .35rem;
+  font-size: .72rem;
+  color: var(--texto-fraco);
+  line-height: 1.35;
+}
+
+.op-dica code,
+.op-log code {
+  font-family: var(--mono);
+  font-size: .95em;
+}
+
+.op-estado {
+  margin: 0 0 .6rem;
+  font-size: .8rem;
+  font-weight: 600;
+  padding: .35rem .5rem;
+  border-radius: 8px;
+  border: 1px solid var(--borda);
+  background: var(--superficie);
+}
+.op-estado--neutro { color: var(--texto-fraco); }
+.op-estado--ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.op-estado--erro { color: var(--falha); border-color: color-mix(in srgb, var(--falha) 45%, transparent); }
+
+.op-progresso,
+.op-copiado {
+  font-family: var(--mono);
+  font-size: .76rem;
+  color: var(--texto-suave);
+}
+
+/* ------------------------------------------------------------------- Log */
+
+.op-secao--log { padding-bottom: .4rem; }
+
+.op-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.op-log-item {
+  border: 1px solid var(--borda);
+  border-left: 4px solid var(--texto-fraco);
+  border-radius: 8px;
+  background: var(--superficie);
+  padding: .4rem .5rem;
+  font-size: .78rem;
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+
+.op-log-item--ok { border-left-color: var(--ok); }
+.op-log-item--erro { border-left-color: var(--falha); }
+.op-log-item--rede { border-left-color: var(--avisar); }
+
+.op-log-linha1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .4rem;
+}
+
+.op-rota {
+  font-family: var(--mono);
+  font-size: .76rem;
+  word-break: break-all;
+}
+
+.op-status {
+  font-family: var(--mono);
+  font-size: .72rem;
+  font-weight: 800;
+  padding: .1rem .4rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+.op-status--ok { color: var(--ok); }
+.op-status--erro { color: var(--falha); }
+.op-status--rede { color: var(--avisar); }
+
+.op-cid {
+  font-family: var(--mono);
+  font-size: .72rem;
+  text-align: left;
+  color: var(--texto-suave);
+  background: var(--superficie-2);
+  border: 1px dashed var(--borda);
+  border-radius: 6px;
+  padding: .22rem .4rem;
+  cursor: pointer;
+  word-break: break-all;
+}
+.op-cid:hover { color: var(--texto); border-style: solid; }
+
+.op-trace {
+  font-family: var(--mono);
+  font-size: .72rem;
+  color: var(--ok);
+  background: var(--baixa-bg);
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent);
+  border-radius: 6px;
+  padding: .25rem .4rem;
+  word-break: break-all;
+}
+
+.op-problema {
+  border: 1px solid color-mix(in srgb, var(--falha) 40%, transparent);
+  background: var(--alta-bg);
+  border-radius: 7px;
+  padding: .35rem .45rem;
+  font-size: .74rem;
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+}
+
+.op-problema dt {
+  font-weight: 700;
+  color: var(--sev-alta);
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.op-problema dd {
+  margin: 0 0 .2rem;
+  font-family: var(--mono);
+  font-size: .72rem;
+  color: var(--texto);
+  word-break: break-word;
+}
+.op-problema .op-problema-rfc {
+  font-size: .66rem;
+  color: var(--texto-fraco);
+  font-family: var(--fonte);
+}
+
