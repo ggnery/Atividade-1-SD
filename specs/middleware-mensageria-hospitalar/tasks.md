@@ -101,30 +101,30 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - Handler único com binding `#`, gravação somente-inserção na Trilha_de_Auditoria
   - _Requirements: R7.1, R7.3, R7.4_
 
-- [ ] 6. API Gateway
-- [ ] 6.1 Borda HTTP, segurança e erros
+- [x] 6. API Gateway
+- [x] 6.1 Borda HTTP, segurança e erros
   - Composition root injetando apenas `Publisher`, `RpcClient` e `ProjecaoLeitos` — sem sessão de banco
   - 18 endpoints de §8.2, schemas Pydantic, dependências de JWT e API Key, matriz papel × endpoint
   - Middleware de correlação e tradutor de erro RFC 7807 cobrindo 401, 403, 404, 409, 422, 500, 503 e 504
   - Emissão de `acesso.negado` na recusa por papel
   - _Requirements: R4.1, R4.2, R4.4, R4.5, R7.2, R8.2, R8.3, R8.4, R8.5, R8.6_
 
-- [ ] 6.2 OpenAPI e Swagger
+- [x] 6.2 OpenAPI e Swagger
   - Anotação de tags, exemplos de request e response, security schemes e respostas de erro declaradas
   - _Requirements: R8.1_
 
-- [ ] 6.3 Painel de leitos
+- [x] 6.3 Painel de leitos
   - `projecao.py` alimentada por `q.gateway.projecao`; `sse.py` com fan-out para `/painel/stream`
   - `static/painel.html`, `.css`, `.js`: cards por leito com cor por severidade, lista de alertas, indicador de conexão, reconexão automática
   - _Requirements: R11.1, R11.2, R11.3, R11.4, R11.5, R11.6, R11.7_
 
-- [ ] 7. Cliente simulador de monitor de leito
+- [x] 7. Cliente simulador de monitor de leito
   - CLI com `--cenario`, `--leito`, `--leitos`, `--intervalo`, `--duracao`, `--semente`, `--api-key`
   - Trajetórias fisiológicas determinísticas por semente
   - Os quatro cenários de R10.6: estável, deterioração, falha de consumidor com retentativa, mensagem à DLQ
   - _Requirements: R10.6, R6.1_
 
-- [ ] 8. Empacotamento e orquestração
+- [x] 8. Empacotamento e orquestração
   - `Dockerfile` único com dois perfis e `hospitalmq` instalado como pacote local
   - `docker-compose.yml` com healthchecks (`rabbitmq-diagnostics`, `pg_isready`, `/health`) e `depends_on: service_healthy`
   - Um `DATABASE_URL` por serviço consumidor; o gateway não recebe nenhum
@@ -147,7 +147,7 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - Teste de arquitetura falhando se o gateway ganhar sessão de banco
   - _Requirements: R4.1, R4.2, R4.4, R5.3, R6.6, R7.1, R8.2, R8.4, R8.5, R10.3_
 
-- [ ] 9.3 Ponta a ponta com Docker Compose
+- [x] 9.3 Ponta a ponta com Docker Compose
   - Subir o ambiente, esperar prontidão por healthcheck, exercitar o fluxo clínico completo e encerrar
   - _Requirements: R10.1, R10.4_
 

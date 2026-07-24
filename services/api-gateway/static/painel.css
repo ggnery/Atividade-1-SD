@@ -1,0 +1,445 @@
+/* Painel de Leitos — HospitalMQ (design 8.7.7).
+   HTML + CSS + JS puros, servidos pelo proprio gateway, sem build e sem CDN (R11.6).
+   Cor NUNCA e o unico sinal: cada severidade tem rotulo textual e icone (acessibilidade AA). */
+
+:root {
+  color-scheme: light dark;
+
+  --fonte: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --bg: #eef2f7;
+  --superficie: #ffffff;
+  --superficie-2: #f8fafc;
+  --texto: #0f172a;
+  --texto-suave: #475569;
+  --texto-fraco: #64748b;
+  --borda: #d3dbe6;
+  --sombra: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 12px rgba(15, 23, 42, .05);
+
+  /* Severidades (design 8.7.7). */
+  --sev-normal: #64748b;
+  --sev-baixa: #16a34a;
+  --sev-media: #d97706;
+  --sev-alta: #dc2626;
+
+  --normal-bg: #f1f5f9;
+  --baixa-bg: #f0fdf4;
+  --media-bg: #fffbeb;
+  --alta-bg: #fef2f2;
+
+  --ok: #16a34a;
+  --avisar: #d97706;
+  --falha: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1120;
+    --superficie: #121a2b;
+    --superficie-2: #0f1626;
+    --texto: #e8eef7;
+    --texto-suave: #9fb0c7;
+    --texto-fraco: #6b7c96;
+    --borda: #263349;
+    --sombra: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 18px rgba(0, 0, 0, .35);
+
+    --sev-normal: #94a3b8;
+    --sev-baixa: #22c55e;
+    --sev-media: #f59e0b;
+    --sev-alta: #f87171;
+
+    --normal-bg: #172033;
+    --baixa-bg: #10241a;
+    --media-bg: #29200c;
+    --alta-bg: #2c1414;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--fonte);
+  background: var(--bg);
+  color: var(--texto);
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100vh;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+/* ---------------------------------------------------------------- Cabecalho */
+
+#cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 1.25rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: .7rem 1.25rem;
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borda);
+  box-shadow: var(--sombra);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+#cabecalho h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+#cabecalho .marca {
+  color: var(--sev-baixa);
+  font-weight: 700;
+}
+
+.indicadores {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.contador {
+  color: var(--texto-suave);
+  font-size: .9rem;
+}
+
+.contador b {
+  color: var(--texto);
+  font-variant-numeric: tabular-nums;
+}
+
+#relogio {
+  font-family: var(--mono);
+  font-size: .95rem;
+  color: var(--texto-suave);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Indicador de conexao — ponto colorido + rotulo textual (design 8.7.4). */
+.conexao {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  font-size: .85rem;
+  font-weight: 600;
+  padding: .2rem .6rem;
+  border-radius: 999px;
+  border: 1px solid var(--borda);
+}
+
+.conexao .ponto {
+  width: .6rem;
+  height: .6rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.conexao--conectado { color: var(--ok); }
+.conexao--reconectando { color: var(--avisar); }
+.conexao--reconectando .ponto { animation: piscar 1s steps(2, start) infinite; }
+.conexao--offline { color: var(--falha); }
+
+@keyframes piscar { 50% { opacity: .25; } }
+
+/* ---------------------------------------------------------------- Conteudo */
+
+#conteudo {
+  display: grid;
+  grid-template-columns: 1fr minmax(240px, 320px);
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  align-items: start;
+}
+
+@media (max-width: 780px) {
+  #conteudo { grid-template-columns: 1fr; }
+}
+
+#mural {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: .85rem;
+  align-content: start;
+}
+
+.vazio {
+  color: var(--texto-fraco);
+  font-style: italic;
+  padding: 1.5rem .25rem;
+}
+
+/* ------------------------------------------------------------------- Cards */
+
+.card {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-left: 5px solid var(--sev-normal);
+  border-radius: 12px;
+  padding: .75rem .85rem;
+  box-shadow: var(--sombra);
+  display: flex;
+  flex-direction: column;
+  gap: .55rem;
+  transition: border-color .2s, background .2s;
+}
+
+.card--livre { opacity: .72; }
+
+.card__topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.card__leito {
+  font-weight: 700;
+  font-size: 1.02rem;
+  letter-spacing: .3px;
+}
+
+.card__setor {
+  font-size: .72rem;
+  color: var(--texto-fraco);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .4px;
+  padding: .18rem .5rem;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--sev-normal);
+  white-space: nowrap;
+}
+
+.card__paciente {
+  font-size: .9rem;
+  color: var(--texto-suave);
+  display: flex;
+  justify-content: space-between;
+  gap: .5rem;
+}
+
+.card__paciente .int {
+  font-family: var(--mono);
+  font-size: .78rem;
+  color: var(--texto-fraco);
+}
+
+.card__escore {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  justify-content: center;
+  padding: .1rem 0;
+}
+
+.card__escore .num {
+  font-size: 2.4rem;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.card__escore .rot {
+  font-size: .72rem;
+  color: var(--texto-fraco);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.card__critico {
+  font-size: .68rem;
+  color: var(--sev-alta);
+  font-weight: 700;
+  text-align: center;
+}
+
+.sinais {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .2rem .7rem;
+  font-size: .84rem;
+  border-top: 1px dashed var(--borda);
+  padding-top: .5rem;
+}
+
+.sinais .par {
+  display: flex;
+  justify-content: space-between;
+  gap: .4rem;
+}
+
+.sinais .k { color: var(--texto-fraco); }
+.sinais .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.card__o2 {
+  font-size: .8rem;
+  color: var(--texto-suave);
+}
+
+.card__rodape {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .5rem;
+  font-size: .74rem;
+  color: var(--texto-fraco);
+}
+
+.idade { font-variant-numeric: tabular-nums; }
+
+.tarja-rejeicao {
+  font-size: .74rem;
+  font-weight: 600;
+  color: var(--sev-media);
+  background: var(--media-bg);
+  border: 1px solid color-mix(in srgb, var(--sev-media) 40%, transparent);
+  border-radius: 7px;
+  padding: .3rem .45rem;
+}
+
+.despacho {
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+.despacho--notificado { color: var(--ok); }
+.despacho--falhou { color: var(--falha); font-weight: 700; }
+.despacho--gerado { color: var(--avisar); }
+
+/* Severidades — cor + acento; alta ganha borda espessa e pulsacao (design 8.7.7, R11.3). */
+.sev-normal { border-left-color: var(--sev-normal); }
+.sev-normal .badge { background: var(--sev-normal); }
+
+.sev-baixa { border-left-color: var(--sev-baixa); background: var(--baixa-bg); }
+.sev-baixa .badge { background: var(--sev-baixa); }
+.sev-baixa .card__escore .num { color: var(--sev-baixa); }
+
+.sev-media { border-left-color: var(--sev-media); background: var(--media-bg); }
+.sev-media .badge { background: var(--sev-media); }
+.sev-media .card__escore .num { color: var(--sev-media); }
+
+.sev-alta {
+  border: 1px solid var(--sev-alta);
+  border-left: 6px solid var(--sev-alta);
+  background: var(--alta-bg);
+  animation: pulsar 1.5s ease-in-out infinite;
+}
+.sev-alta .badge { background: var(--sev-alta); }
+.sev-alta .card__escore .num { color: var(--sev-alta); }
+
+@keyframes pulsar {
+  0%, 100% { box-shadow: var(--sombra); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--sev-alta) 30%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sev-alta { animation: none; }
+  .conexao--reconectando .ponto { animation: none; }
+}
+
+/* --------------------------------------------------------- Coluna de alertas */
+
+#coluna-alertas {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: 12px;
+  padding: .85rem;
+  box-shadow: var(--sombra);
+  position: sticky;
+  top: 4.2rem;
+}
+
+#coluna-alertas h2 {
+  margin: 0 0 .6rem;
+  font-size: .95rem;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--texto-suave);
+}
+
+#lista-alertas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-height: 74vh;
+  overflow-y: auto;
+}
+
+.alerta {
+  border: 1px solid var(--borda);
+  border-left: 4px solid var(--sev-alta);
+  border-radius: 9px;
+  padding: .5rem .6rem;
+  background: var(--superficie-2);
+  font-size: .82rem;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.alerta--realce { animation: realce 2s ease-out; }
+@keyframes realce {
+  from { background: color-mix(in srgb, var(--sev-alta) 22%, var(--superficie-2)); }
+  to { background: var(--superficie-2); }
+}
+
+.alerta__linha1 {
+  display: flex;
+  justify-content: space-between;
+  gap: .5rem;
+  font-weight: 700;
+}
+.alerta__hora { font-family: var(--mono); color: var(--texto-fraco); font-weight: 500; }
+.alerta__linha2 { color: var(--texto-suave); }
+.alerta__paciente { color: var(--texto); }
+
+.alerta.sev-baixa { border-left-color: var(--sev-baixa); }
+.alerta.sev-media { border-left-color: var(--sev-media); }
+.alerta.sev-alta { border-left-color: var(--sev-alta); }
+
+/* ------------------------------------------------------------------ Rodape */
+
+#rodape {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem 1rem;
+  align-items: center;
+  padding: .5rem 1.25rem;
+  background: var(--superficie);
+  border-top: 1px solid var(--borda);
+  font-size: .78rem;
+  color: var(--texto-fraco);
+}
+
+.ultimo-evento { font-family: var(--mono); }
+.ultimo-evento b { color: var(--texto-suave); }
+
+.aviso {
+  color: var(--sev-media);
+  font-weight: 600;
+}

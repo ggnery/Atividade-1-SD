@@ -1,0 +1,36 @@
+# Contexto de build enxuto (design 12.1.1). tests/ entra no container `testes` por
+# volume (12.3.2), nao pela imagem. Excluir .venv/.git evita enviar centenas de MB
+# ao daemon a cada build.
+.git/
+.gitignore
+.venv/
+venv/
+env/
+__pycache__/
+*.py[codz]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+tests/
+docs/
+slides/
+specs/
+memory-bank/
+instrucoes/
+.specsmd/
+.claude/
+
+.env
+.env.example
+docker-compose.yml
+docker-compose.test.yml
+Dockerfile
+Makefile
+README.md
+LICENSE
+*.md

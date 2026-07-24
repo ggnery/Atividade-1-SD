@@ -1,0 +1,240 @@
+# Orquestracao local completa do Hospital Inteligente G3 (design 12.3).
+# Sobe com um comando, sem passo manual (R10.1):  docker compose up -d --build
+#
+# Ancoras YAML (&app-comum, &health-http) eliminam a repeticao do que e REALMENTE
+# comum aos cinco consumidores. A ancora app-comum NAO declara `environment` de
+# proposito: o merge key `<<:` do YAML SUBSTITUI chaves inteiras, entao cada servico
+# escreve seu proprio bloco environment por extenso -- inclusive o DATABASE_URL, que
+# usa um PAPEL de banco distinto por servico (svc_*, nunca o dono `hospital`), que e
+# o que da efeito aos REVOKE de INV-4 e INV-7 (design 12.3.4). O api-gateway e o
+# bedside-monitor NAO recebem DATABASE_URL: sao a fronteira de dados de 8.1.1.
+name: hospital-g3
+
+# Comum a todos os cinco Servico_Consumidor (perfil dominio). NUNCA inclui `environment`.
+x-app-comum: &app-comum
+  build:
+    context: .
+    # Os cinco consumidores sobem um FastAPI minimo (/health, /metrics) via
+    # services.comum.app.criar_app e sao executados por uvicorn -- por isso o
+    # perfil precisa de "borda" (fastapi, uvicorn) ALEM de "dominio" (sqlalchemy,
+    # asyncpg). O docstring de cada main.py ja declara "perfis borda + dominio".
+    args: { PERFIL: "borda,dominio" }
+  image: hospital-g3/app:dominio
+  env_file: [.env]              # AMQP_URL, TRANSPORTE, LOG_LEVEL, PREFETCH... vem daqui
+  depends_on:
+    rabbitmq: { condition: service_healthy }
+    postgres: { condition: service_healthy }
+    db-init:  { condition: service_completed_successfully }
+  restart: unless-stopped
+  init: true                    # PID 1 correto: encaminha SIGTERM e recolhe zumbis
+  stop_grace_period: 20s        # tempo para o Consumer terminar a mensagem em voo e dar ACK
+  networks: [hospital]
+
+x-health-http: &health-http
+  interval: 10s
+  timeout: 3s
+  retries: 6
+  start_period: 20s
+
+services:
+  # --- infraestrutura ---------------------------------------------------------
+  rabbitmq:                        # design 6.10.1
+    image: rabbitmq:3.13-management
+    hostname: hospitalmq-broker    # fixa o diretorio mnesia entre recriacoes do container
+    environment:
+      RABBITMQ_DEFAULT_USER: hospital
+      RABBITMQ_DEFAULT_PASS: hospital      # credencial de demonstracao (C6, R10.2)
+      RABBITMQ_DEFAULT_VHOST: hospital     # vhost legivel, sem escape %2F
+    ports:
+      - "5672:5672"                        # AMQP
+      - "15672:15672"                      # UI de management, usada no minuto 10 do roteiro
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./infra/rabbitmq.conf:/etc/rabbitmq/conf.d/10-hospital.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_local_alarms"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [hospital]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hospital      # DONO do banco. Usado APENAS pelo db-init (12.3.4).
+      POSTGRES_PASSWORD: hospital  # Nenhum servico da aplicacao conecta com este papel.
+      POSTGRES_DB: hospital
+    ports: ["5433:5432"]           # 5433 no host evita colisao com um Postgres local
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hospital -d hospital"]
+      <<: *health-http
+    restart: unless-stopped
+    networks: [hospital]
+
+  db-init:                         # one-shot idempotente (design 7.8.3, 12.3.4)
+    image: postgres:16-alpine
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes: ["./db:/db:ro"]
+    environment:
+      PGPASSWORD: hospital         # unico lugar do arquivo onde o papel dono aparece
+    # UMA invocacao de psql para os dois arquivos: o bloco de papeis e ALTER DEFAULT
+    # PRIVILEGES roda ANTES de qualquer CREATE TABLE, e como dono, o que faz os
+    # GRANT/REVOKE valerem para os papeis svc_* (12.3.4). ON_ERROR_STOP derruba o
+    # db-init em qualquer erro da cadeia, impedindo os consumidores de subir com
+    # privilegio errado (service_completed_successfully).
+    command: >
+      psql -v ON_ERROR_STOP=1 -h postgres -U hospital -d hospital
+           -f /db/schema.sql -f /db/seed.sql
+    restart: "no"
+    networks: [hospital]
+
+  # --- borda ------------------------------------------------------------------
+  api-gateway:                     # imagem :borda, sem asyncpg; sem DATABASE_URL (8.1.1)
+    build:
+      context: .
+      args: { PERFIL: borda }
+    image: hospital-g3/app:borda
+    env_file: [.env]
+    environment:
+      SERVICE_NAME: api-gateway
+      # NENHUM DATABASE_URL aqui: o gateway nao tem papel de banco (7.4.1, 8.1.1).
+    command: >
+      uvicorn --app-dir services/api-gateway main:app
+              --host 0.0.0.0 --port 8000 --no-access-log
+    ports: ["8000:8000"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+    restart: unless-stopped
+    init: true
+    networks: [hospital]
+
+  # --- dominio: os cinco Servico_Consumidor -----------------------------------
+  admission-service:
+    <<: *app-comum
+    environment:
+      SERVICE_NAME: admission-service
+      DATABASE_URL: postgresql+asyncpg://svc_admission:demo-svc_admission@postgres:5432/hospital
+    command: >
+      uvicorn --app-dir services/admission-service main:app
+              --host 0.0.0.0 --port 8001 --no-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8001/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+
+  vitals-service:
+    <<: *app-comum
+    environment:
+      SERVICE_NAME: vitals-service
+      # Papel proprio, senha propria, schema proprio. NAO e o dono do banco.
+      # O REVOKE UPDATE, DELETE de INV-4 (7.4.3) so tem efeito porque a conexao
+      # da aplicacao usa este papel, e nao "hospital".
+      DATABASE_URL: postgresql+asyncpg://svc_vitals:demo-svc_vitals@postgres:5432/hospital
+    command: >
+      uvicorn --app-dir services/vitals-service main:app
+              --host 0.0.0.0 --port 8002 --no-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8002/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+
+  triage-service:
+    <<: *app-comum
+    environment:
+      SERVICE_NAME: triage-service
+      DATABASE_URL: postgresql+asyncpg://svc_triage:demo-svc_triage@postgres:5432/hospital
+    command: >
+      uvicorn --app-dir services/triage-service main:app
+              --host 0.0.0.0 --port 8003 --no-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8003/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+
+  alert-service:                   # unico consumidor cuja falha a demonstracao liga (12.5)
+    <<: *app-comum
+    environment:
+      SERVICE_NAME: alert-service
+      DATABASE_URL: postgresql+asyncpg://svc_alert:demo-svc_alert@postgres:5432/hospital
+      # Interpolacao, nao env_file: o valor continua vindo do .env, mas fica declarado
+      # AQUI qual processo estes tres botoes ligam. O shell tem precedencia, o que
+      # preserva o plano B do roteiro:
+      #   ALERT_FAILURE_RATE=1.0 docker compose up -d --force-recreate alert-service
+      ALERT_FAILURE_RATE:        ${ALERT_FAILURE_RATE:-0.0}
+      ALERT_FAILURE_LEITOS:      ${ALERT_FAILURE_LEITOS:-UTI-03}
+      ALERT_FAILURE_RATE_LEITOS: ${ALERT_FAILURE_RATE_LEITOS:-1.0}
+    command: >
+      uvicorn --app-dir services/alert-service main:app
+              --host 0.0.0.0 --port 8004 --no-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8004/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+
+  audit-service:
+    <<: *app-comum
+    environment:
+      SERVICE_NAME: audit-service
+      DATABASE_URL: postgresql+asyncpg://svc_audit:demo-svc_audit@postgres:5432/hospital
+    command: >
+      uvicorn --app-dir services/audit-service main:app
+              --host 0.0.0.0 --port 8005 --no-access-log
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8005/health',timeout=2).status==200 else 1)\""]
+      <<: *health-http
+
+  # --- cliente da demonstracao (perfil demo) ----------------------------------
+  bedside-monitor:
+    profiles: ["demo"]
+    build: { context: ., args: { PERFIL: borda } }
+    image: hospital-g3/app:borda
+    env_file: [.env]
+    environment:
+      GATEWAY_URL: http://api-gateway:8000
+      # sem DATABASE_URL: o Cliente_Leito fala HTTP com o gateway e nada mais (C3)
+    depends_on:
+      api-gateway: { condition: service_healthy }
+    command: ["python", "clients/bedside_monitor/__main__.py", "--cenario", "estavel"]
+    restart: "no"
+    networks: [hospital]
+
+  # --- veiculo do nivel e2e (perfil test) -------------------------------------
+  testes:
+    profiles: ["test"]
+    <<: *app-comum
+    build: { context: ., args: { PERFIL: "dominio,dev" } }
+    image: hospital-g3/app:testes
+    environment:
+      SERVICE_NAME: testes
+      BASE_URL: http://api-gateway:8000
+      # O container de testes e o UNICO que recebe mais de uma credencial, porque
+      # o trabalho dele e justamente provar as fronteiras (7.9.3, T-31). Nao existe
+      # DATABASE_URL "pelado" aqui: teste que esquecer de escolher o papel quebra
+      # com KeyError em vez de silenciosamente conectar como dono.
+      DATABASE_URL_OWNER:     postgresql+asyncpg://hospital:hospital@postgres:5432/hospital
+      DATABASE_URL_ADMISSION: postgresql+asyncpg://svc_admission:demo-svc_admission@postgres:5432/hospital
+      DATABASE_URL_VITALS:    postgresql+asyncpg://svc_vitals:demo-svc_vitals@postgres:5432/hospital
+      DATABASE_URL_TRIAGE:    postgresql+asyncpg://svc_triage:demo-svc_triage@postgres:5432/hospital
+      DATABASE_URL_ALERT:     postgresql+asyncpg://svc_alert:demo-svc_alert@postgres:5432/hospital
+      DATABASE_URL_AUDIT:     postgresql+asyncpg://svc_audit:demo-svc_audit@postgres:5432/hospital
+    volumes:                       # tests/ fica fora do contexto de build (.dockerignore)
+      - ./tests:/app/tests:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    depends_on:                    # redeclarado por inteiro: o merge key SUBSTITUI a chave
+      rabbitmq:    { condition: service_healthy }
+      postgres:    { condition: service_healthy }
+      db-init:     { condition: service_completed_successfully }
+      api-gateway: { condition: service_healthy }
+    command: ["pytest", "tests/e2e", "-q", "--maxfail=1"]
+    restart: "no"
+
+volumes:
+  rabbitmq-data:
+  postgres-data:
+
+networks:
+  hospital:
+    driver: bridge

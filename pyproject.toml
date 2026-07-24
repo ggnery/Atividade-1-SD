@@ -26,11 +26,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Perfil "borda": api-gateway e demais processos HTTP (12.2).
+# Perfil "borda": api-gateway e demais processos HTTP (12.2). Inclui httpx porque o
+# Cliente_Leito (clients/bedside_monitor) fala HTTP com o gateway -- o proprio comentario
+# do Dockerfile lista "httpx" no grupo borda; sem ele o simulador quebra no import (12.2.3).
 borda = [
   "fastapi>=0.111",
   "uvicorn[standard]>=0.30",
   "sse-starlette>=2.1",
+  "httpx>=0.27",
 ]
 # Perfil "dominio": os cinco consumidores com sessao de banco (12.2, 12.3.4).
 dominio = [
@@ -69,6 +72,17 @@ ignore = ["D203", "D213"] # conflitos entre convencoes de docstring
 "services/*" = ["D"]              # docstring obrigatoria apenas no middleware
 "clients/*" = ["D"]
 "scripts/*" = ["D", "ANN"]
+
+# Depends/Security/Query/... em default e o padrao idiomatico do FastAPI; B008 e falso
+# positivo aqui. Restrito as chamadas do framework, nao um "ignore" geral de B008.
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+  "fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Path",
+  "fastapi.Header", "fastapi.Body", "fastapi.Cookie", "fastapi.Form", "fastapi.File",
+  "Depends", "Security", "Query", "Path", "Header", "Body", "Cookie", "Form", "File",
+  # fabrica de dependencia parametrizada do proprio gateway (mesmo padrao do Depends)
+  "dependencias.exigir_papel", "exigir_papel",
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

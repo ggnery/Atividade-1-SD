@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HospitalMQ · Painel de Leitos</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏥</text></svg>">
+  <link rel="stylesheet" href="/painel/painel.css">
+</head>
+<body>
+  <header id="cabecalho">
+    <h1><span class="marca">HospitalMQ</span> · Painel de Leitos</h1>
+    <div class="indicadores">
+      <span id="conexao" class="conexao conexao--reconectando" role="status" aria-live="polite">
+        <span class="ponto" aria-hidden="true"></span>
+        <span class="rotulo">conectando…</span>
+      </span>
+      <span class="contador">leitos <b id="n-leitos">0</b></span>
+      <span class="contador">alertas <b id="n-alertas">0</b></span>
+      <time id="relogio" aria-label="Hora atual">--:--:--</time>
+    </div>
+  </header>
+
+  <main id="conteudo">
+    <section id="mural" aria-label="Leitos monitorados">
+      <p id="mural-vazio" class="vazio">Aguardando eventos do Broker…</p>
+    </section>
+
+    <aside id="coluna-alertas" aria-label="Alertas recentes">
+      <h2>Alertas recentes</h2>
+      <ol id="lista-alertas" aria-live="polite"></ol>
+      <p id="alertas-vazio" class="vazio">Nenhum alerta ainda.</p>
+    </aside>
+  </main>
+
+  <footer id="rodape">
+    <span id="aviso-hidratacao" class="aviso" hidden></span>
+    <span id="ultimo-evento" class="ultimo-evento">aguardando eventos…</span>
+  </footer>
+
+  <script src="/painel/painel.js" defer></script>
+</body>
+</html>
