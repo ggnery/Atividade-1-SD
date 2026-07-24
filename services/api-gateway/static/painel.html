@@ -153,6 +153,40 @@
       </div>
       <p class="op-dica">A borda aceita <code>SpO₂ = 20</code> (202); o vitals-service recusa como
         <b>PermanentError</b> e envia para a DLQ sem retentativa (R6.6).</p>
+
+      <!-- Monitoramento continuo: coleta que nao termina sozinha ------------->
+      <div class="op-continuo-bloco">
+        <h4 class="op-subtitulo">Monitoramento contínuo</h4>
+
+        <div class="op-grade-2">
+          <p class="campo">
+            <label for="op-intervalo">Intervalo entre leituras (s)</label>
+            <input id="op-intervalo" name="op-intervalo" type="number" min="1" max="60" step="1"
+                   value="2" inputmode="numeric">
+          </p>
+          <p class="campo">
+            <label for="op-escalada">Escalada até crítico</label>
+            <select id="op-escalada" name="op-escalada">
+              <option value="30">rápido · 30 s</option>
+              <option value="90" selected>normal · 1 min 30 s</option>
+              <option value="180">lento · 3 min</option>
+            </select>
+          </p>
+        </div>
+
+        <div class="op-botoes">
+          <button id="op-continuo" type="button" class="btn btn--primario" aria-pressed="false">
+            Iniciar monitoramento
+          </button>
+          <button id="op-parar-todos" type="button" class="btn btn--fantasma" disabled>Parar todos</button>
+        </div>
+
+        <p id="op-continuo-estado" class="op-continuo" role="status" aria-live="polite">parado</p>
+
+        <p class="op-dica">Publica <code>POST /sinais</code> a cada intervalo e <b>não termina
+          sozinho</b>: os números mudam a cada leitura e a gravidade sobe devagar, atravessando
+          <b>baixa → média → alta</b>. Vários leitos podem ser monitorados ao mesmo tempo.</p>
+      </div>
     </section>
 
     <!-- 4. Alta ------------------------------------------------------------>

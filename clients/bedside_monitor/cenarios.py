@@ -3,8 +3,10 @@
 O catalogo e a **fonte de verdade** do ``--cenario``, do ``--help`` e do README (R10.2): tudo o que
 distingue um cenario do outro mora aqui como **dado** (uma :class:`DefinicaoCenario`), nunca como
 ramo de codigo espalhado pelo simulador. Sao os quatro cenarios que R10.6 enumera --
-``estavel``, ``deterioracao``, ``falha-consumidor`` e ``fora-de-faixa`` -- mais o extra opcional
-``tempestade``, fora do enunciado, que exercita *competing consumers* e ``prefetch`` (R2.5, R2.6).
+``estavel``, ``deterioracao``, ``falha-consumidor`` e ``fora-de-faixa`` -- mais dois extras
+fora do enunciado: ``tempestade``, que exercita *competing consumers* e ``prefetch`` (R2.5, R2.6), e
+``plantao``, o modo continuo em que os sinais mudam a cada leitura e a gravidade sobe devagar ate
+cruzar as bandas do NEWS2 sozinha (ver :attr:`~.perfis.Perfil.PLANTAO`).
 
 Os cenarios 3 e 4 produzem os **dois caminhos distintos** ate a DLQ, e e por isso que sao dois
 (design 12.5.5): ``falha-consumidor`` chega por **esgotamento de retentativa** de um
@@ -44,6 +46,7 @@ class Cenario(StrEnum):
 
     ESTAVEL = "estavel"
     DETERIORACAO = "deterioracao"
+    PLANTAO = "plantao"
     FALHA_CONSUMIDOR = "falha-consumidor"
     FORA_DE_FAIXA = "fora-de-faixa"
     TEMPESTADE = "tempestade"
@@ -59,20 +62,25 @@ class DefinicaoCenario:
             constar de ``ALERT_FAILURE_LEITOS`` para que a falha aconteca.
         api_key_padrao: API Key de dispositivo usada quando ``--api-key`` e o ambiente a omitem.
         intervalo_s: Intervalo padrao entre leituras, em segundos, fixado pelo proprio cenario.
-        passos: Numero de leituras que o cenario publica quando ``--duracao`` nao e informado.
+        passos: Numero de leituras que o cenario publica quando ``--duracao`` nao e informado, ou
+            ``None`` para os cenarios que rodam **indefinidamente** ate ``Ctrl+C`` (``plantao``).
         criterio_r10_6: Frase literal do enunciado (R10.6) coberta por este cenario, ou ``None``
             para os cenarios extra fora do enunciado.
         narrativa: Texto impresso em ``stdout`` antes do primeiro ``POST``, explicando ao avaliador
             o que observar.
+        escalada_s: Horizonte padrao da escalada do modo continuo, em segundos -- quanto tempo o
+            paciente leva de compensado (``g = 0``) a critico (``g = 1``). ``None`` nos cenarios que
+            nao usam :attr:`~.perfis.Perfil.PLANTAO`; sobreposto por ``--escalada``.
     """
 
     perfil: Perfil
     leito_padrao: str
     api_key_padrao: str
     intervalo_s: float
-    passos: int
+    passos: int | None
     criterio_r10_6: str | None
     narrativa: str
+    escalada_s: float | None = None
 
 
 CENARIOS: Final[dict[Cenario, DefinicaoCenario]] = {
@@ -102,6 +110,25 @@ CENARIOS: Final[dict[Cenario, DefinicaoCenario]] = {
             "passa de 5, o card fica vermelho e o alerta entra no topo da lista do painel. Com a "
             "mesma semente, o cruzamento acontece sempre no mesmo instante."
         ),
+    ),
+    Cenario.PLANTAO: DefinicaoCenario(
+        perfil=Perfil.PLANTAO,
+        leito_padrao="UTI-04",  # existe no seed e NAO esta em ALERT_FAILURE_LEITOS
+        api_key_padrao="dev-monitor-l07",
+        intervalo_s=4.0,
+        passos=None,  # roda indefinidamente ate Ctrl+C
+        criterio_r10_6=None,  # extra, fora de R10.6
+        narrativa=(
+            "Leito UTI-04 (extra, fora de R10.6): plantao continuo. Os sete sinais mudam a CADA "
+            "leitura, como num monitor de verdade, e a gravidade do paciente sobe devagar: card "
+            "verde no inicio, amarelo (NEWS2 3-4) por volta de 1min20, vermelho (NEWS2 >= 5, com "
+            "alerta no topo do painel) por volta de 2min, oxigenio suplementar em ~2min25 e queda "
+            "de consciencia (AVPU V) em ~2min50, com escore acima de 15. Dai em diante o paciente "
+            "PERMANECE critico, oscilando -- ninguem volta ao verde sozinho. Roda ate Ctrl+C; use "
+            "--escalada SEG para acelerar (ex.: --escalada 60 conta a mesma historia em 1 minuto) "
+            "e --leitos N para encher o mural com leitos que pioram em ritmos levemente diferentes."
+        ),
+        escalada_s=180.0,
     ),
     Cenario.FALHA_CONSUMIDOR: DefinicaoCenario(
         perfil=Perfil.DETERIORACAO,

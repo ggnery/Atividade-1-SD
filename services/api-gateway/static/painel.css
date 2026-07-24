@@ -483,6 +483,14 @@ body {
 }
 .btn--primario:hover:not(:disabled) { filter: brightness(1.08); }
 
+/* Estado "ligado" do monitoramento continuo — o botao vira Parar (vermelho de severidade alta). */
+.btn--parar {
+  background: var(--sev-alta);
+  border-color: var(--sev-alta);
+  color: #fff;
+}
+.btn--parar:hover:not(:disabled) { filter: brightness(1.08); }
+
 .btn--fantasma { background: transparent; }
 
 .btn--chip {
@@ -704,6 +712,42 @@ body.console-aberto .console {
   font-family: var(--mono);
   font-size: .76rem;
   color: var(--texto-suave);
+}
+
+/* ------------------------------------------- Monitoramento continuo (secao 3) */
+
+.op-continuo-bloco {
+  border-top: 1px dashed var(--borda);
+  margin-top: .5rem;
+  padding-top: .6rem;
+}
+
+.op-subtitulo {
+  margin: 0 0 .5rem;
+  font-size: .78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--texto-suave);
+}
+
+/* Uma linha por leito monitorado (`white-space: pre-line` respeita o "\n" do textContent). */
+.op-continuo {
+  margin: 0 0 .5rem;
+  font-family: var(--mono);
+  font-size: .74rem;
+  line-height: 1.5;
+  color: var(--texto-suave);
+  white-space: pre-line;
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  background: var(--superficie);
+  padding: .32rem .45rem;
+}
+
+.op-continuo--ativo {
+  color: var(--texto);
+  border-color: color-mix(in srgb, var(--sev-media) 45%, transparent);
 }
 
 /* ------------------------------------------------------------------- Log */

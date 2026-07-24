@@ -111,6 +111,7 @@
     renderAlertas(null);
     atualizarContadores();
     sincronizarSelects();
+    verificarMonitores();
     marcarConexao("conectado");
     elAviso.hidden = snap.hidratada !== false;
     if (snap.hidratada === false) {
@@ -129,6 +130,8 @@
         antes.internacao_id !== card.internacao_id) {
       sincronizarSelects();
     }
+    // Alta/liberacao do leito derruba o monitoramento continuo; o resto so reflete o novo escore.
+    verificarMonitores();
     ultimoEvento("leito.atualizado", card.correlation_id);
   }
 
@@ -354,7 +357,8 @@
   ["btn-operar", "console", "op-fechar", "op-usuario", "op-senha", "op-entrar", "op-sair",
    "op-recarregar", "op-sessao-estado", "op-apikey", "op-nome", "op-documento", "op-nascimento",
    "op-sexo", "op-leito-livre", "op-admitir", "op-novo-nome", "op-leito-ocupado", "op-sequencia",
-   "op-cancelar-sequencia", "op-progresso", "op-leito-alta", "op-motivo-alta", "op-alta",
+   "op-cancelar-sequencia", "op-progresso", "op-intervalo", "op-escalada", "op-continuo",
+   "op-parar-todos", "op-continuo-estado", "op-leito-alta", "op-motivo-alta", "op-alta",
    "op-log", "op-log-vazio", "op-limpar-log", "op-copiado"
   ].forEach(function (id) { el[id] = document.getElementById(id); });
 
@@ -582,6 +586,8 @@
     preencherSelect(el["op-leito-livre"], livres, "— sem leitos livres —");
     preencherSelect(el["op-leito-ocupado"], ocupados, "— sem leitos ocupados —");
     preencherSelect(el["op-leito-alta"], ocupados, "— sem leitos ocupados —");
+    // O rotulo do botao de monitoramento depende de qual leito esta selecionado agora.
+    atualizarBotaoContinuo();
   }
 
   /** GET /leitos (R11.7) — registra a chamada no log e reconcilia os selects. */
@@ -746,6 +752,10 @@
     if (sequenciaAtiva) return;
     var leito = el["op-leito-ocupado"].value;
     if (!leito) { estadoSessao("Escolha um leito ocupado.", "erro"); return; }
+    if (monitores.has(leito)) {
+      pararMonitor(leito, null);
+      aviso("monitoramento contínuo de " + leito + " parado: a sequência assumiu o leito");
+    }
 
     sequenciaAtiva = { leito: leito, indice: 0, timer: null };
     el["op-sequencia"].disabled = true;
@@ -768,6 +778,309 @@
       });
     }
     passo();
+  }
+
+  /* ===================================================================== *
+   *  3b. MONITORAMENTO CONTINUO — o leito que "vive".                     *
+   *                                                                      *
+   *  Diferente da "Sequência de deterioração" (8 leituras fixas e para),  *
+   *  este modo publica POST /sinais em laco indefinido: os valores mudam  *
+   *  a cada leitura (ruido) e a GRAVIDADE sobe devagar com o tempo, ate   *
+   *  o card atravessar baixa -> media -> alta sozinho.                    *
+   *                                                                      *
+   *  O console continua SEM regra clinica (design 8.7.7): a trajetoria    *
+   *  abaixo foi calibrada offline contra a tabela NEWS2 de                *
+   *  services/comum/news2.py, mas o escore e a severidade exibidos vem    *
+   *  sempre da projecao do servidor (evento `leito`), nunca de calculo    *
+   *  no navegador.                                                        *
+   * ===================================================================== */
+
+  // Faixas fisiologicas de aceitacao (espelho de FAIXAS_FISIOLOGICAS, services/comum/news2.py).
+  // Todo valor gerado aqui e grampeado nestes limites: o modo continuo NUNCA produz dado invalido
+  // — gerar leitura impossivel e trabalho exclusivo do preset "Fora de faixa" (R6.6).
+  var FAIXAS_ACEITACAO = {
+    frequencia_respiratoria: [0, 80],
+    saturacao_o2: [50, 100],
+    temperatura: [25, 45],
+    pressao_sistolica: [40, 300],
+    frequencia_cardiaca: [20, 250]
+  };
+
+  /* Ancoras da trajetoria continua: `g` e a gravidade normalizada (0 = admissao tranquila,
+   * 1 = quadro critico). Entre duas ancoras os valores sao interpolados linearmente, entao a
+   * evolucao e continua — nao ha "passo" visivel como na tabela de 8 leituras.
+   *
+   * Escore NEWS2 esperado nas ancoras (tabela de 7.5.1, conferida por curl na verificacao):
+   *   g=0.00 -> 0   baixa
+   *   g=0.20 -> 1   baixa
+   *   g=0.35 -> 2   baixa
+   *   g=0.50 -> 3   MEDIA   (SpO2 94 = 1, T 38.3 = 1, FC 100 = 1)
+   *   g=0.68 -> 4   media
+   *   g=0.82 -> 6   ALTA    (FR 22 = 2, SpO2 92 = 2, T = 1, FC = 1)
+   *   g=1.00 -> 17  alta + componente isolado 3 (FR >= 25, SpO2 <= 91, AVPU V)
+   */
+  var TRAJETORIA_CONTINUA = [
+    { g: 0.00, fr: 15, spo2: 98, temp: 36.6, pas: 122, fc: 70 },
+    { g: 0.20, fr: 18, spo2: 95, temp: 37.4, pas: 120, fc: 86 },
+    { g: 0.35, fr: 19, spo2: 95, temp: 37.8, pas: 118, fc: 95 },
+    { g: 0.50, fr: 19, spo2: 94, temp: 38.3, pas: 117, fc: 100 },
+    { g: 0.68, fr: 19, spo2: 93, temp: 38.6, pas: 116, fc: 105 },
+    { g: 0.82, fr: 22, spo2: 92, temp: 38.8, pas: 115, fc: 105 },
+    { g: 1.00, fr: 26, spo2: 90, temp: 39.3, pas: 96, fc: 124 }
+  ];
+
+  /* Ruido pseudoaleatorio: SO em pressao sistolica e frequencia cardiaca.
+   *
+   * Nao e economia de codigo, e a mesma decisao de projeto de `perfis.py` ("ruido mantido DENTRO
+   * da mesma faixa de pontuacao"): PAS e FC tem folga larga na tabela de 7.5.1 (111-219 e 91-110),
+   * entao +-4 mexe no numero sem mudar o ponto. FR, SpO2 e temperatura tem faixas estreitas (2 rpm,
+   * 2 %, 1,0 C) e sao justamente os parametros que empurram o escore para a proxima banda: com
+   * ruido neles, o card ficaria PISCANDO verde/amarelo nas fronteiras em vez de subir de degrau.
+   * Eles evoluem pela interpolacao (mudam sozinhos ao longo da escalada), sem sorteio.
+   */
+  var RUIDO_MAX = { pas: 4, fc: 4 };
+
+  // Gravidade a partir da qual o quadro ganha O2 suplementar e rebaixa o AVPU (fim da escalada).
+  var G_OXIGENIO = 0.90;
+  var G_AVPU_V = 0.96;
+
+  var MONITOR_INTERVALO_PADRAO_S = 2;
+  var MONITOR_INTERVALO_MIN_S = 1;
+  var MONITOR_INTERVALO_MAX_S = 60;
+  var MONITOR_ESCALADA_PADRAO_S = 90;
+
+  // Semente fixa: a mesma configuracao produz a mesma evolucao, como o simulador Python (R10.6).
+  // Ela e combinada com o leito_id para que dois leitos monitorados juntos nao oscilem em unissono
+  // no mural -- e ainda assim cada leito repita a propria sequencia em toda apresentacao.
+  var SEMENTE_MONITOR = 42;
+
+  // leito_id -> monitor ativo. Map permite varios leitos evoluindo ao mesmo tempo no mural.
+  var monitores = new Map();
+
+  /** Gerador pseudoaleatorio proprio (mulberry32) — nunca `Math.random`, para ser reprodutivel. */
+  function criarRng(semente) {
+    var estado = semente >>> 0;
+    return function () {
+      estado = (estado + 0x6d2b79f5) >>> 0;
+      var t = estado;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** Ruido uniforme em [-amplitude, +amplitude]. */
+  function ruido(rng, amplitude) { return (rng() * 2 - 1) * amplitude; }
+
+  /** Semente estavel derivada do leito (djb2 simplificado): "UTI-03" sempre da a mesma sequencia. */
+  function sementeDoLeito(leito) {
+    var h = 5381;
+    for (var i = 0; i < leito.length; i++) h = ((h * 33) ^ leito.charCodeAt(i)) >>> 0;
+    return (SEMENTE_MONITOR + h) >>> 0;
+  }
+
+  function grampear(valor, campo) {
+    var faixa = FAIXAS_ACEITACAO[campo];
+    return Math.min(faixa[1], Math.max(faixa[0], valor));
+  }
+
+  /** Valor base da chave `k` na posicao `t` entre as ancoras `a` e `b` (interpolacao linear). */
+  function entre(a, b, t, k) { return a[k] + (b[k] - a[k]) * t; }
+
+  /** Interpola `k` e devolve inteiro na faixa fisiologica — sem ruido (faixa NEWS2 estreita). */
+  function inteiroLimpo(a, b, t, k, campo) {
+    return grampear(Math.round(entre(a, b, t, k)), campo);
+  }
+
+  /** Interpola `k`, soma ruido de `amplitude` e devolve inteiro na faixa fisiologica. */
+  function inteiroComRuido(a, b, t, k, rng, amplitude, campo) {
+    return grampear(Math.round(entre(a, b, t, k) + ruido(rng, amplitude)), campo);
+  }
+
+  /**
+   * Monta a leitura correspondente a uma gravidade (0..1): trajetoria interpolada + ruido.
+   *
+   * @param {number} gravidade Posicao na trajetoria; 1 = quadro critico (a partir dai so oscila).
+   * @param {function(): number} rng Gerador pseudoaleatorio semeado do monitor.
+   * @returns {{frequencia_respiratoria: number, saturacao_o2: number,
+   *            oxigenio_suplementar: boolean, temperatura: number, pressao_sistolica: number,
+   *            frequencia_cardiaca: number, nivel_consciencia: string}}
+   *          Os sete parametros do `POST /sinais`, todos dentro das faixas fisiologicas.
+   */
+  function leituraContinua(gravidade, rng) {
+    var g = Math.min(1, Math.max(0, gravidade));
+    var i = 0;
+    while (i < TRAJETORIA_CONTINUA.length - 2 && g > TRAJETORIA_CONTINUA[i + 1].g) i += 1;
+    var a = TRAJETORIA_CONTINUA[i];
+    var b = TRAJETORIA_CONTINUA[i + 1];
+    var t = b.g === a.g ? 0 : (g - a.g) / (b.g - a.g);
+    t = Math.min(1, Math.max(0, t));
+
+    // Uma casa decimal na temperatura: e a resolucao da coluna NUMERIC(4,1) e da tabela de 7.5.1.
+    var temperatura = Math.round(entre(a, b, t, "temp") * 10) / 10;
+    return {
+      frequencia_respiratoria: inteiroLimpo(a, b, t, "fr", "frequencia_respiratoria"),
+      saturacao_o2: inteiroLimpo(a, b, t, "spo2", "saturacao_o2"),
+      oxigenio_suplementar: g >= G_OXIGENIO,
+      temperatura: grampear(temperatura, "temperatura"),
+      pressao_sistolica: inteiroComRuido(a, b, t, "pas", rng, RUIDO_MAX.pas, "pressao_sistolica"),
+      frequencia_cardiaca: inteiroComRuido(a, b, t, "fc", rng, RUIDO_MAX.fc, "frequencia_cardiaca"),
+      nivel_consciencia: g >= G_AVPU_V ? "V" : "A"
+    };
+  }
+
+  // -- leitura dos controles ------------------------------------------------ //
+
+  function intervaloEscolhidoS() {
+    var v = parseFloat((el["op-intervalo"] && el["op-intervalo"].value) || "");
+    if (!isFinite(v)) v = MONITOR_INTERVALO_PADRAO_S;
+    v = Math.min(MONITOR_INTERVALO_MAX_S, Math.max(MONITOR_INTERVALO_MIN_S, Math.round(v)));
+    if (el["op-intervalo"]) el["op-intervalo"].value = String(v);
+    return v;
+  }
+
+  function escaladaEscolhidaS() {
+    var v = parseFloat((el["op-escalada"] && el["op-escalada"].value) || "");
+    return isFinite(v) && v > 0 ? v : MONITOR_ESCALADA_PADRAO_S;
+  }
+
+  // -- estado na tela ------------------------------------------------------- //
+
+  /** Descreve um monitor usando o escore/severidade da PROJECAO (servidor), nunca calculo local. */
+  function descreverMonitor(m) {
+    var card = leitos.get(m.leito);
+    var escore = (card && card.score_news2 !== null && card.score_news2 !== undefined)
+      ? String(card.score_news2) : "—";
+    var sev = (card && card.severidade) ? rotuloSev(card.severidade) : "—";
+    return m.leito + " · leitura " + m.leitura +
+      " · gravidade " + Math.round(m.gravidade * 100) + "%" +
+      " · NEWS2 " + escore + " (" + sev + ")";
+  }
+
+  function atualizarEstadoContinuo() {
+    var alvo = el["op-continuo-estado"];
+    if (!alvo) return;
+    if (!monitores.size) {
+      alvo.textContent = "parado";
+      alvo.classList.remove("op-continuo--ativo");
+      return;
+    }
+    var linhas = [];
+    monitores.forEach(function (m) { linhas.push(descreverMonitor(m)); });
+    alvo.textContent = linhas.join("\n");
+    alvo.classList.add("op-continuo--ativo");
+  }
+
+  function atualizarBotaoContinuo() {
+    if (!el["op-continuo"]) return;
+    var leito = el["op-leito-ocupado"] ? el["op-leito-ocupado"].value : "";
+    var ativo = !!leito && monitores.has(leito);
+    el["op-continuo"].textContent = ativo ? "Parar " + leito : "Iniciar monitoramento";
+    el["op-continuo"].setAttribute("aria-pressed", ativo ? "true" : "false");
+    el["op-continuo"].classList.toggle("btn--parar", ativo);
+    if (el["op-parar-todos"]) el["op-parar-todos"].disabled = monitores.size === 0;
+  }
+
+  // -- ciclo de vida do monitor -------------------------------------------- //
+
+  /** Interrompe de verdade o monitor de um leito (timer cancelado; resposta em voo ignorada). */
+  function pararMonitor(leito, mensagem) {
+    var m = monitores.get(leito);
+    if (!m) return;
+    m.vivo = false;
+    if (m.timer) window.clearTimeout(m.timer);
+    monitores.delete(leito);
+    atualizarBotaoContinuo();
+    atualizarEstadoContinuo();
+    if (mensagem) estadoSessao(mensagem, "neutro");
+  }
+
+  function pararTodosMonitores(mensagem) {
+    Array.from(monitores.keys()).forEach(function (leito) { pararMonitor(leito, null); });
+    if (mensagem) estadoSessao(mensagem, "neutro");
+  }
+
+  function passoMonitor(m) {
+    if (!m.vivo || monitores.get(m.leito) !== m) return;
+    var decorridoMs = Date.now() - m.inicio;
+    m.gravidade = Math.min(1, decorridoMs / m.escaladaMs);
+    m.leitura += 1;
+
+    // Em intervalos curtos o sorteio pode repetir a leitura anterior; um unico resorteio garante
+    // que a tela nunca mostre dois numeros identicos seguidos (a sensacao de monitor ligado).
+    var leitura = leituraContinua(m.gravidade, m.rng);
+    var chave = JSON.stringify(leitura);
+    if (chave === m.ultimaChave) {
+      leitura = leituraContinua(m.gravidade, m.rng);
+      chave = JSON.stringify(leitura);
+    }
+    m.ultimaChave = chave;
+
+    publicarSinais(m.leito, leitura).then(function (res) {
+      if (!m.vivo || monitores.get(m.leito) !== m) return;   // parado durante o voo
+      if (!res.ok) {
+        // 409/422/503 (ou falha de rede) param o modo continuo; o corpo RFC 7807 ja foi ao log.
+        pararMonitor(m.leito, null);
+        estadoSessao(resumoErro(res, "POST /sinais interrompeu o monitoramento de " + m.leito),
+          "erro");
+        return;
+      }
+      atualizarEstadoContinuo();
+      m.timer = window.setTimeout(function () { passoMonitor(m); }, m.intervaloMs);
+    });
+  }
+
+  function iniciarMonitor(leito) {
+    if (monitores.has(leito)) return;
+    if (sequenciaAtiva && sequenciaAtiva.leito === leito) {
+      pararSequencia("substituída pelo monitoramento contínuo");
+    }
+    var intervaloS = intervaloEscolhidoS();
+    var escaladaS = escaladaEscolhidaS();
+    var m = {
+      leito: leito,
+      inicio: Date.now(),
+      intervaloMs: intervaloS * 1000,
+      escaladaMs: escaladaS * 1000,
+      leitura: 0,
+      gravidade: 0,
+      rng: criarRng(sementeDoLeito(leito)),
+      ultimaChave: "",
+      timer: null,
+      vivo: true
+    };
+    monitores.set(leito, m);
+    atualizarBotaoContinuo();
+    atualizarEstadoContinuo();
+    estadoSessao("Monitoramento contínuo em " + leito + ": uma leitura a cada " + intervaloS +
+      " s; a gravidade sobe de baixa a crítica em " + escaladaS + " s e não para sozinha.", "ok");
+    passoMonitor(m);
+  }
+
+  function alternarMonitor() {
+    var leito = el["op-leito-ocupado"].value;
+    if (!leito) { estadoSessao("Escolha um leito ocupado.", "erro"); return; }
+    if (monitores.has(leito)) {
+      pararMonitor(leito, "Monitoramento contínuo de " + leito + " parado a pedido.");
+      return;
+    }
+    iniciarMonitor(leito);
+  }
+
+  /** Alta ou desaparecimento do leito na projecao para o monitor com aviso explicito. */
+  function verificarMonitores() {
+    if (!monitores || !monitores.size) return;
+    Array.from(monitores.keys()).forEach(function (leito) {
+      var card = leitos.get(leito);
+      if (!card) {
+        pararMonitor(leito, "Leito " + leito +
+          " saiu da projeção — monitoramento contínuo parado.");
+      } else if (card.estado === "livre") {
+        pararMonitor(leito, "Alta em " + leito +
+          " — monitoramento contínuo parado (leito livre não aceita sinais).");
+      }
+    });
+    atualizarEstadoContinuo();
   }
 
   // ----------------------------------------------------------------- 4. alta
@@ -872,6 +1185,23 @@
     el["op-cancelar-sequencia"].addEventListener("click", function () {
       pararSequencia("cancelada");
     });
+
+    el["op-continuo"].addEventListener("click", alternarMonitor);
+    el["op-parar-todos"].addEventListener("click", function () {
+      if (!monitores.size) return;
+      pararTodosMonitores("Monitoramento contínuo parado em todos os leitos.");
+    });
+    // Trocar o leito selecionado NAO derruba quem esta rodando (vários leitos sao permitidos):
+    // apenas troca o alvo do botao, e o aviso diz quem continua vivo.
+    el["op-leito-ocupado"].addEventListener("change", function () {
+      atualizarBotaoContinuo();
+      if (monitores.size && !monitores.has(el["op-leito-ocupado"].value)) {
+        aviso("monitoramento contínuo segue ativo em " +
+          Array.from(monitores.keys()).join(", "));
+      }
+    });
+    atualizarEstadoContinuo();
+    atualizarBotaoContinuo();
 
     el["op-alta"].addEventListener("click", darAlta);
     el["op-limpar-log"].addEventListener("click", function () {

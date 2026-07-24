@@ -23,7 +23,13 @@ from datetime import UTC, datetime
 import httpx
 
 from .cenarios import Cenario, DefinicaoCenario, definicao_de
-from .perfis import GeradorSinais
+from .perfis import (
+    PASSOS_ATE_CRITICO_PADRAO,
+    GeradorSinais,
+    Perfil,
+    SinaisVitais,
+    ritmo_do_leito,
+)
 
 __all__ = ["ConfiguracaoSimulador", "Simulador"]
 
@@ -46,9 +52,12 @@ class ConfiguracaoSimulador:
         api_key: API Key de dispositivo apresentada em ``X-API-Key`` (R4.5).
         leitos: Leitos que publicarao em paralelo -- um so no caso comum, varios na tempestade.
         intervalo_s: Intervalo efetivo entre leituras, em segundos.
-        passos: Numero de leituras por leito quando ``duracao_s`` e ``None``.
+        passos: Numero de leituras por leito quando ``duracao_s`` e ``None``; ``None`` roda
+            indefinidamente, ate ``Ctrl+C`` (o caso do cenario ``plantao``).
         duracao_s: Se informado, publica ate esgotar esta duracao, ignorando ``passos``.
         semente: Semente do gerador, para reproduzir a mesma sequencia (``SEMENTE_SIMULADOR``).
+        escalada_s: Horizonte da escalada do modo continuo, em segundos (``--escalada``). ``None``
+            fora do perfil ``plantao``.
     """
 
     cenario: Cenario
@@ -56,14 +65,26 @@ class ConfiguracaoSimulador:
     api_key: str
     leitos: tuple[str, ...]
     intervalo_s: float
-    passos: int
+    passos: int | None
     duracao_s: float | None
     semente: int
+    escalada_s: float | None = None
 
     @property
     def definicao(self) -> DefinicaoCenario:
         """Definicao completa do cenario escolhido."""
         return definicao_de(self.cenario)
+
+    @property
+    def passos_ate_critico(self) -> int:
+        """Horizonte da escalada convertido em numero de leituras (modo continuo).
+
+        Traduz os segundos de ``escalada_s`` no numero de passos que o :class:`GeradorSinais`
+        entende, dado o ``intervalo_s`` efetivo. Sem ``escalada_s`` cai no padrao do gerador.
+        """
+        if self.escalada_s is None:
+            return PASSOS_ATE_CRITICO_PADRAO
+        return max(1, round(self.escalada_s / self.intervalo_s))
 
 
 @dataclass(slots=True)
@@ -86,9 +107,25 @@ class Simulador:
 
     config: ConfiguracaoSimulador
     _ultimo_correlation_id: str | None = field(default=None, init=False)
+    _interrompido: bool = field(default=False, init=False)
+
+    @property
+    def interrompido(self) -> bool:
+        """Verdadeiro se a coleta terminou por ``Ctrl+C``, e nao por esgotar passos/duracao.
+
+        O CLI usa este sinal para devolver o codigo de saida 130 sem precisar deixar o
+        ``KeyboardInterrupt`` vazar como *traceback*.
+        """
+        return self._interrompido
 
     async def executar(self) -> None:
-        """Executa a demonstracao completa: narrativa, laco(s) de coleta e dicas de observacao."""
+        """Executa a demonstracao completa: narrativa, laco(s) de coleta e dicas de observacao.
+
+        Um ``Ctrl+C`` durante a coleta -- a unica forma de encerrar o cenario ``plantao``, que roda
+        indefinidamente -- chega aqui como :class:`asyncio.CancelledError`. Em vez de vazar um
+        *traceback*, cancelamos os laco(s) de leito, esperamos o cancelamento e seguimos para as
+        dicas de observacao: quem interrompeu ainda quer o ``scripts/trace.sh`` do ultimo envio.
+        """
         cfg = self.config
         self._narrar()
         limits = httpx.Limits(max_connections=max(10, len(cfg.leitos)))
@@ -105,9 +142,12 @@ class Simulador:
             try:
                 await asyncio.gather(*tarefas)
             except asyncio.CancelledError:  # pragma: no cover - so em Ctrl+C
+                self._interrompido = True
                 for tarefa in tarefas:
                     tarefa.cancel()
-                raise
+                await asyncio.gather(*tarefas, return_exceptions=True)
+        if self._interrompido:  # pragma: no cover - so em Ctrl+C
+            print("\ncoleta interrompida pelo operador; nada em transito foi perdido.")
         self._dicas_de_observacao()
 
     def _narrar(self) -> None:
@@ -116,11 +156,18 @@ class Simulador:
         alvo = ", ".join(cfg.leitos)
         print(f"== Cliente_Leito | cenario '{cfg.cenario.value}' | leito(s): {alvo} ==")
         print(cfg.definicao.narrativa)
-        print(
-            f"gateway={cfg.base_url}  intervalo={cfg.intervalo_s:g}s  "
-            f"semente={cfg.semente}  "
-            + (f"duracao={cfg.duracao_s:g}s" if cfg.duracao_s else f"passos={cfg.passos}")
-        )
+        if cfg.duracao_s is not None:
+            limite = f"duracao={cfg.duracao_s:g}s"
+        elif cfg.passos is not None:
+            limite = f"passos={cfg.passos}"
+        else:
+            limite = "sem limite (Ctrl+C encerra)"
+        linha = f"gateway={cfg.base_url}  intervalo={cfg.intervalo_s:g}s  semente={cfg.semente}  "
+        if cfg.definicao.perfil is Perfil.PLANTAO and cfg.escalada_s is not None:
+            linha += (
+                f"escalada={cfg.escalada_s:g}s ({cfg.passos_ate_critico} leituras ate critico)  "
+            )
+        print(linha + limite)
         print("-" * 72)
 
     async def _rodar_leito(self, cliente: httpx.AsyncClient, leito: str, indice: int) -> None:
@@ -128,8 +175,13 @@ class Simulador:
 
         Cada leito tem seu proprio :class:`GeradorSinais`, semeado a partir da semente base somada
         ao indice do leito -- assim a sequencia de cada leito e reproduzivel e, ao mesmo tempo,
-        distinta das dos vizinhos na tempestade. O laco para quando ``passos`` leituras foram
-        enviadas ou quando ``duracao_s`` se esgota.
+        distinta das dos vizinhos na tempestade. No modo continuo, o **ritmo** da escalada tambem
+        varia por leito (:func:`~.perfis.ritmo_do_leito`), para que os cards do mural nao troquem de
+        cor todos no mesmo segundo; o leito de indice 0 conserva exatamente o ritmo pedido.
+
+        Tres condicoes de parada, nesta precedencia: ``duracao_s`` esgotada; ``passos`` leituras
+        enviadas; ou nenhuma das duas -- caso em que o laco roda **indefinidamente** e so termina
+        com ``Ctrl+C`` (o cenario ``plantao``).
 
         Args:
             cliente: O cliente HTTP compartilhado, ja com ``base_url`` e ``X-API-Key``.
@@ -137,21 +189,27 @@ class Simulador:
             indice: Posicao do leito na lista, usada para derivar a semente e ordenar a saida.
         """
         cfg = self.config
-        gerador = GeradorSinais(semente=cfg.semente + indice, perfil=cfg.definicao.perfil)
+        gerador = GeradorSinais(
+            semente=cfg.semente + indice,
+            perfil=cfg.definicao.perfil,
+            passos_ate_critico=ritmo_do_leito(
+                cfg.passos_ate_critico, semente=cfg.semente, indice=indice
+            ),
+        )
         inicio = asyncio.get_running_loop().time()
         passo = 0
         while True:
-            if cfg.duracao_s is None:
-                if passo >= cfg.passos:
+            if cfg.duracao_s is not None:
+                if (asyncio.get_running_loop().time() - inicio) >= cfg.duracao_s:
                     return
-            elif (asyncio.get_running_loop().time() - inicio) >= cfg.duracao_s:
+            elif cfg.passos is not None and passo >= cfg.passos:
                 return
 
             leitura = gerador.proxima()
             coletado_em = datetime.now(UTC).isoformat()
             payload = leitura.para_payload(leito_id=leito, coletado_em=coletado_em)
             resultado = await self._enviar(cliente, payload)
-            self._registrar(leito, passo, leitura.saturacao_o2, resultado)
+            self._registrar(leito, passo, leitura, gerador, resultado)
             passo += 1
             await asyncio.sleep(cfg.intervalo_s)
 
@@ -228,10 +286,20 @@ class Simulador:
         return str(corpo)[:120]
 
     def _registrar(
-        self, leito: str, passo: int, saturacao: int, resultado: _ResultadoEnvio
+        self,
+        leito: str,
+        passo: int,
+        leitura: SinaisVitais,
+        gerador: GeradorSinais,
+        resultado: _ResultadoEnvio,
     ) -> None:
-        """Imprime uma linha por leitura, no espirito do ``202`` + ``X-Correlation-ID`` (12.5.5)."""
-        prefixo = f"[{leito} #{passo:02d}] SpO2={saturacao}%"
+        """Imprime uma linha por leitura, no espirito do ``202`` + ``X-Correlation-ID`` (12.5.5).
+
+        A linha mostra os valores que mudam a cada coleta (e, no modo continuo, a gravidade ``g`` do
+        paciente), para que o terminal conte a mesma historia que o painel -- sem consultar a fila,
+        o banco ou o ``/metrics``: o cliente nao sabe o NEWS2, quem calcula e o ``vitals-service``.
+        """
+        prefixo = f"[{leito} #{passo:02d}] {self._resumo(leitura, gerador)}"
         if resultado.status == 202:
             cid = resultado.correlation_id or "?"
             print(f"{prefixo} -> HTTP 202  X-Correlation-ID={cid}")
@@ -239,6 +307,21 @@ class Simulador:
             print(f"{prefixo} -> sem envio ({resultado.detalhe})")
         else:
             print(f"{prefixo} -> HTTP {resultado.status}  {resultado.detalhe}")
+
+    def _resumo(self, leitura: SinaisVitais, gerador: GeradorSinais) -> str:
+        """Resume a leitura em uma linha curta; no modo continuo, prefixa a gravidade ``g``."""
+        corpo = (
+            f"FR={leitura.frequencia_respiratoria} SpO2={leitura.saturacao_o2}% "
+            f"T={leitura.temperatura} PAS={leitura.pressao_sistolica} "
+            f"FC={leitura.frequencia_cardiaca}"
+        )
+        if leitura.oxigenio_suplementar:
+            corpo += " O2"
+        if leitura.nivel_consciencia != "A":
+            corpo += f" AVPU={leitura.nivel_consciencia}"
+        if gerador.perfil is not Perfil.PLANTAO:
+            return corpo
+        return f"g={gerador.gravidade(max(0, gerador.passo - 1)):.0%} {corpo}"
 
     def _dicas_de_observacao(self) -> None:
         """Imprime, ao final, os comandos de observacao (design 12.5.5). Nao consulta a fila."""
@@ -250,6 +333,11 @@ class Simulador:
             print(
                 "Confira a DLQ de alertas (~7s apos o 7o passo):   "
                 "fila q.alert.alerta-gerado.dlq na UI do RabbitMQ"
+            )
+        elif self.config.cenario is Cenario.PLANTAO:
+            print(
+                "Acompanhe o card trocar de cor (verde -> amarelo -> vermelho) no painel:   "
+                f"{self.config.base_url}/"
             )
         elif self.config.cenario is Cenario.FORA_DE_FAIXA:
             print(

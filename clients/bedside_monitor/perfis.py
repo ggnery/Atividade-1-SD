@@ -25,17 +25,39 @@ isolado chegue a 3 antes disso -- de modo que o alerta dispare pela regra do agr
 ensaiado. O ruido pseudoaleatorio por semente e mantido **dentro** da mesma faixa de pontuacao de
 cada parametro (7.5.1), entao a trajetoria de escore e identica para qualquer semente, ao mesmo
 tempo que os valores brutos variam -- as duas propriedades que o teste T-36 do design verifica.
+
+Modo continuo (:attr:`Perfil.PLANTAO`). Os quatro perfis acima sao *trajetorias por passo*: cada
+passo tem uma faixa de pontuacao pre-definida. O perfil ``plantao`` e diferente -- ele modela um
+**estado interno continuo de gravidade** ``g`` (um ``float`` de 0.0, paciente compensado, a 1.0,
+paciente critico) e deriva os sete parametros de ``g`` por interpolacao entre um extremo saudavel e
+um extremo grave, com ruido pequeno por cima. Duas consequencias praticas: as leituras consecutivas
+nunca sao iguais (parece um monitor de verdade, nao um script) e a gravidade sobe **devagar**,
+atravessando as bandas do NEWS2 em ordem -- baixa, media e so entao alta -- em vez de pular direto
+para o vermelho. O horizonte da escalada e parametrizavel
+(:data:`PASSOS_ATE_CRITICO_PADRAO`, ``--escalada`` no CLI) e o determinismo por semente e o mesmo
+dos outros perfis: mesma semente, mesma evolucao.
 """
 
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Final, Literal
 
-__all__ = ["GeradorSinais", "NivelConsciencia", "Perfil", "SinaisVitais"]
+__all__ = [
+    "DISPERSAO_RITMO_PADRAO",
+    "ENVELOPE_PLANTAO",
+    "PASSOS_ATE_CRITICO_PADRAO",
+    "GeradorSinais",
+    "NivelConsciencia",
+    "Perfil",
+    "SinaisVitais",
+    "ritmo_do_leito",
+]
 
 NivelConsciencia = Literal["A", "V", "P", "U"]
 """Escala AVPU do NEWS2 (design 7.5.1): ``A`` alerta; ``V``/``P``/``U`` graves."""
@@ -55,13 +77,15 @@ class Perfil(StrEnum):
     Cada valor existe para exercitar um ramo distinto da regra clinica NEWS2 e o cenario de falha:
     :attr:`ESTAVEL` (contraste visual, R11.1), :attr:`DETERIORACAO` (agregado cruza 5, R6.2/R6.3),
     :attr:`COMPONENTE_ISOLADO` (um componente = 3 com agregado baixo, R6.3) e :attr:`FORA_DE_FAIXA`
-    (valor impossivel -> DLQ, R6.6).
+    (valor impossivel -> DLQ, R6.6). :attr:`PLANTAO` e o modo continuo: em vez de uma trajetoria
+    por passo, um estado de gravidade que sobe devagar e faz o escore atravessar as bandas em ordem.
     """
 
     ESTAVEL = "estavel"
     DETERIORACAO = "deterioracao"
     COMPONENTE_ISOLADO = "componente-isolado"
     FORA_DE_FAIXA = "fora-de-faixa"
+    PLANTAO = "plantao"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +191,147 @@ _TRAJETORIA_DETERIORACAO: Final[tuple[_PassoDeterioracao, ...]] = (
 )
 
 
+# --------------------------------------------------------------------------- #
+# Modo continuo -- Perfil.PLANTAO                                              #
+#                                                                             #
+# Uma rampa por parametro, interpolando o extremo saudavel no extremo grave a  #
+# medida que a gravidade g caminha de 0.0 a 1.0. As janelas (inicio, fim) e a  #
+# curva foram CALIBRADAS contra a tabela NEWS2 de 7.5.1 para que o escore suba  #
+# ponto a ponto, na ordem abaixo, sem pular bandas (g -> total agregado, sem   #
+# ruido; medido de verdade, nao estimado):                                     #
+#                                                                             #
+#   g 0.26  FC 91      -> 1     g 0.65  FC 111     -> 5   (severidade ALTA)    #
+#   g 0.38  T 38.1     -> 2     g 0.70  T 39.1     -> 6                        #
+#   g 0.43  SpO2 95    -> 3     g 0.71  SpO2 93    -> 7   (banda clinica alta)  #
+#          (severidade MEDIA)   g 0.80  O2 suplem. -> 9                        #
+#   g 0.57  PAS 110    -> 4     g 0.83  PAS 100    -> 10                       #
+#                               g 0.84  FR 21      -> 12                       #
+#                               g 0.94  AVPU V     -> 15  (comp. critico)      #
+#                               g 0.95  FR 25      -> 16                       #
+#                                                                             #
+# Nenhum componente isolado chega a 3 antes de g 0.94, entao o primeiro alerta  #
+# nasce da regra do AGREGADO (>= 5), como no cenario deterioracao.             #
+# --------------------------------------------------------------------------- #
+PASSOS_ATE_CRITICO_PADRAO: Final[int] = 45
+"""Leituras para ``g`` ir de 0.0 a 1.0 no modo continuo.
+
+Calibrado junto com o ``intervalo_s`` de 4 s do cenario ``plantao``: 45 leituras x 4 s = 180 s de
+escalada, com severidade **media** por volta de 1min20, **alta** (agregado >= 5) por volta de 2 min
+e a banda clinica alta (>= 7) logo em seguida -- a janela de 2 a 3 minutos que cabe na apresentacao
+de 15 minutos sem deixar o avaliador esperando, e longa o bastante para ele ver o card passar pelo
+amarelo antes do vermelho. O CLI sobrepoe este padrao com ``--escalada SEG``.
+"""
+
+DISPERSAO_RITMO_PADRAO: Final[float] = 0.22
+"""Dispersao relativa do ritmo entre leitos (+-22%), para os cards nao virarem todos juntos."""
+
+ENVELOPE_PLANTAO: Final[Mapping[str, tuple[int | Decimal, int | Decimal]]] = MappingProxyType(
+    {
+        "frequencia_respiratoria": (8, 40),
+        "saturacao_o2": (85, 100),
+        "temperatura": (Decimal("35.5"), Decimal("41.0")),
+        "pressao_sistolica": (80, 140),
+        "frequencia_cardiaca": (50, 150),
+    }
+)
+"""Envelope de seguranca do modo continuo: teto e piso aplicados **depois** do ruido.
+
+Deliberadamente mais estreito que ``FAIXAS_FISIOLOGICAS`` (design 7.7.1): o modo continuo simula um
+paciente que piora, nao um sensor quebrado, entao nenhuma leitura sua pode ser recusada por R6.6 --
+gerar dado impossivel e trabalho exclusivo do perfil :attr:`Perfil.FORA_DE_FAIXA`. O teste
+``test_envelope_do_plantao_cabe_nas_faixas_fisiologicas`` prova a continencia contra a fonte de
+verdade em ``services/comum/news2.py``, de modo que uma mudanca de la nao passe silenciosa aqui.
+"""
+
+_LIMIAR_O2_SUPLEMENTAR: Final[float] = 0.80
+"""Gravidade a partir da qual a equipe instala oxigenio suplementar (+2 no NEWS2)."""
+
+_LIMIAR_CONSCIENCIA_V: Final[float] = 0.94
+"""Gravidade a partir da qual o paciente deixa de estar alerta (AVPU ``A`` -> ``V``, +3)."""
+
+_UM_DECIMO: Final[Decimal] = Decimal("0.1")
+
+
+@dataclass(frozen=True, slots=True)
+class _Rampa:
+    """Interpolacao de um parametro entre o extremo saudavel e o extremo grave.
+
+    Attributes:
+        saudavel: Valor em ``g <= inicio`` (paciente compensado).
+        grave: Valor em ``g >= fim`` (paciente critico).
+        inicio: Gravidade em que o parametro comeca a se mover.
+        fim: Gravidade em que o parametro atinge o extremo grave.
+        curva: Expoente da interpolacao. ``1.0`` e linear; ``> 1`` retarda o inicio e acelera o
+            final (a taquipneia da ``frequencia_respiratoria``, que aparece tarde e rapido).
+    """
+
+    saudavel: float
+    grave: float
+    inicio: float
+    fim: float
+    curva: float = 1.0
+
+    def em(self, gravidade: float) -> float:
+        """Valor interpolado do parametro para a ``gravidade`` informada.
+
+        Args:
+            gravidade: Estado interno ``g`` do paciente, em ``[0.0, 1.0]``.
+
+        Returns:
+            O valor do parametro, ainda em ponto flutuante e sem ruido nem arredondamento.
+        """
+        if gravidade <= self.inicio:
+            fracao = 0.0
+        elif gravidade >= self.fim:
+            fracao = 1.0
+        else:
+            fracao = ((gravidade - self.inicio) / (self.fim - self.inicio)) ** self.curva
+        return self.saudavel + (self.grave - self.saudavel) * fracao
+
+
+_FC_PLANTAO: Final[_Rampa] = _Rampa(78.0, 126.0, 0.02, 0.95)
+_TEMPERATURA_PLANTAO: Final[_Rampa] = _Rampa(37.0, 39.8, 0.05, 0.94)
+_SATURACAO_PLANTAO: Final[_Rampa] = _Rampa(98.0, 92.0, 0.08, 0.92)
+_PAS_PLANTAO: Final[_Rampa] = _Rampa(126.0, 94.0, 0.16, 1.0)
+_FR_PLANTAO: Final[_Rampa] = _Rampa(15.0, 26.0, 0.20, 0.98, curva=3.5)
+
+
+def _limitar(valor: Decimal, campo: str) -> Decimal:
+    """Aplica o :data:`ENVELOPE_PLANTAO` de ``campo`` a ``valor`` (clamp nos dois extremos)."""
+    minimo, maximo = ENVELOPE_PLANTAO[campo]
+    return max(Decimal(minimo), min(Decimal(maximo), valor))
+
+
+def ritmo_do_leito(
+    passos_base: int,
+    *,
+    semente: int,
+    indice: int,
+    dispersao: float = DISPERSAO_RITMO_PADRAO,
+) -> int:
+    """Varia levemente o horizonte de escalada de cada leito, de forma reprodutivel.
+
+    Num mural com varios leitos, uma escalada identica faria todos os cards trocarem de cor no
+    mesmo instante -- artificial e, pior, ambiguo para quem assiste. Esta funcao dispersa o ritmo em
+    ``+-dispersao`` a partir da semente base e do indice do leito, mantendo o determinismo. O leito
+    de indice ``0`` conserva **exatamente** o ritmo pedido, para que uma execucao de um unico leito
+    honre ``--escalada`` ao pe da letra.
+
+    Args:
+        passos_base: Horizonte pedido, em leituras, para ``g`` ir de 0.0 a 1.0.
+        semente: Semente base do simulador.
+        indice: Posicao do leito na lista de leitos.
+        dispersao: Dispersao relativa maxima aplicada ao horizonte.
+
+    Returns:
+        O horizonte deste leito, em leituras, sempre ``>= 1``.
+    """
+    if indice <= 0:
+        return max(1, passos_base)
+    rng = random.Random(semente + 9973 * indice)
+    return max(1, round(passos_base * (1.0 + rng.uniform(-dispersao, dispersao))))
+
+
 class GeradorSinais:
     """Gera leituras plausiveis e reprodutiveis. Mesma semente, mesma sequencia (design 10.7.3).
 
@@ -176,18 +341,32 @@ class GeradorSinais:
     ordem em que outros geradores (de outros leitos, na tempestade) foram chamados.
     """
 
-    __slots__ = ("_passo", "_perfil", "_rng")
+    __slots__ = ("_passo", "_passos_ate_critico", "_perfil", "_rng")
 
-    def __init__(self, *, semente: int = 42, perfil: Perfil = Perfil.ESTAVEL) -> None:
+    def __init__(
+        self,
+        *,
+        semente: int = 42,
+        perfil: Perfil = Perfil.ESTAVEL,
+        passos_ate_critico: int = PASSOS_ATE_CRITICO_PADRAO,
+    ) -> None:
         """Constroi o gerador.
 
         Args:
             semente: Semente do gerador pseudoaleatorio (``SEMENTE_SIMULADOR``; padrao 42 aqui).
             perfil: Trajetoria fisiologica a seguir.
+            passos_ate_critico: Horizonte da escalada do modo continuo -- quantas leituras a
+                gravidade leva para ir de 0.0 a 1.0. Ignorado pelos demais perfis.
+
+        Raises:
+            ValueError: Se ``passos_ate_critico`` nao for positivo (divisao por zero na gravidade).
         """
+        if passos_ate_critico < 1:
+            raise ValueError(f"passos_ate_critico deve ser >= 1; recebido {passos_ate_critico}")
         self._rng = random.Random(semente)
         self._perfil = perfil
         self._passo = 0
+        self._passos_ate_critico = passos_ate_critico
 
     @property
     def perfil(self) -> Perfil:
@@ -198,6 +377,26 @@ class GeradorSinais:
     def passo(self) -> int:
         """Quantidade de leituras ja geradas -- o proximo indice a ser produzido."""
         return self._passo
+
+    @property
+    def passos_ate_critico(self) -> int:
+        """Horizonte da escalada do modo continuo, em leituras."""
+        return self._passos_ate_critico
+
+    def gravidade(self, passo: int | None = None) -> float:
+        """Estado interno de gravidade ``g`` do modo continuo, em ``[0.0, 1.0]``.
+
+        Sobe linearmente com o passo e **satura** em 1.0: uma vez critico, o paciente permanece
+        critico (com oscilacao vinda do ruido), nunca voltando sozinho ao verde.
+
+        Args:
+            passo: Indice da leitura; ``None`` usa o passo corrente do gerador.
+
+        Returns:
+            A gravidade correspondente, saturada em 1.0.
+        """
+        indice = self._passo if passo is None else passo
+        return min(1.0, max(0, indice) / self._passos_ate_critico)
 
     def proxima(self) -> SinaisVitais:
         """Produz a proxima leitura da trajetoria e avanca o contador de passos.
@@ -213,6 +412,8 @@ class GeradorSinais:
             return self._componente_isolado()
         if self._perfil is Perfil.FORA_DE_FAIXA:
             return self._fora_de_faixa(passo)
+        if self._perfil is Perfil.PLANTAO:
+            return self._plantao(passo)
         return self._estavel()
 
     def sequencia(self, n: int) -> list[SinaisVitais]:
@@ -304,3 +505,65 @@ class GeradorSinais:
             frequencia_cardiaca=leitura.frequencia_cardiaca,
             nivel_consciencia=leitura.nivel_consciencia,
         )
+
+    def _plantao(self, passo: int) -> SinaisVitais:
+        """Modo continuo: deriva a leitura da gravidade ``g`` do passo e aplica ruido pequeno.
+
+        Tres etapas, na ordem: (1) ``g`` avanca um passo do horizonte de escalada; (2) cada
+        parametro e interpolado pela sua :class:`_Rampa` entre o extremo saudavel e o extremo grave,
+        com o oxigenio suplementar entrando em :data:`_LIMIAR_O2_SUPLEMENTAR` e a consciencia
+        degradando de ``A`` para ``V`` em :data:`_LIMIAR_CONSCIENCIA_V`; (3) um ruido
+        pseudoaleatorio pequeno em **pressao sistolica e frequencia cardiaca**, para que duas
+        leituras consecutivas nunca sejam iguais. O clamp final no :data:`ENVELOPE_PLANTAO` garante
+        que nem o ruido nem uma escalada muito curta produzam valor fora da faixa de R6.6.
+
+        Por que o ruido nao entra em FR, SpO2 e temperatura: as faixas do NEWS2 (7.5.1) para esses
+        tres sao estreitas (2 rpm, 2 %, 1,0 C) e sao justamente as que empurram o escore para a
+        banda seguinte -- um ruido de +-1 ali atravessa a fronteira e faz o escore RECUAR, o que na
+        tela vira um card piscando amarelo/verde no meio da escalada. PAS (111-219 -> 0) e FC
+        (91-110 -> 1) tem folga larga, entao o numero quase sempre se mexe sem trocar de ponto.
+        A amplitude +-2 foi calibrada medindo 60 sementes: com +-4 a banda regredia em 28 pontos
+        da serie e com +-2 cai para 11 (49 das 60 sementes ficam com a trilha perfeita), ao custo
+        de 0,7% de leituras iguais a anterior. E a mesma decisao ja tomada no modo
+        continuo do console (``TRAJETORIA_CONTINUA`` em ``painel.js``) e o mesmo principio que
+        :meth:`_deterioracao` aplica: ruido visivel, banda estavel.
+
+        Args:
+            passo: Indice da leitura na serie deste leito.
+
+        Returns:
+            A leitura do passo, plausivel, reprodutivel e dentro do envelope de seguranca.
+        """
+        g = self.gravidade(passo)
+        fr = int(_limitar(Decimal(round(_FR_PLANTAO.em(g))), "frequencia_respiratoria"))
+        saturacao = int(_limitar(Decimal(round(_SATURACAO_PLANTAO.em(g))), "saturacao_o2"))
+        temperatura = _limitar(
+            Decimal(f"{_TEMPERATURA_PLANTAO.em(g):.1f}"), "temperatura"
+        ).quantize(_UM_DECIMO)
+        pas = self._inteiro_com_ruido(_PAS_PLANTAO.em(g), 2, "pressao_sistolica")
+        fc = self._inteiro_com_ruido(_FC_PLANTAO.em(g), 2, "frequencia_cardiaca")
+        return SinaisVitais(
+            frequencia_respiratoria=fr,
+            saturacao_o2=saturacao,
+            oxigenio_suplementar=g >= _LIMIAR_O2_SUPLEMENTAR,
+            temperatura=temperatura,
+            pressao_sistolica=pas,
+            frequencia_cardiaca=fc,
+            nivel_consciencia="V" if g >= _LIMIAR_CONSCIENCIA_V else "A",
+        )
+
+    # -- ruido do modo continuo ---------------------------------------------- #
+
+    def _inteiro_com_ruido(self, valor: float, amplitude: int, campo: str) -> int:
+        """Arredonda ``valor``, soma ruido em ``+-amplitude`` e aplica o envelope de ``campo``."""
+        bruto = Decimal(round(valor) + self._rng.randint(-amplitude, amplitude))
+        return int(_limitar(bruto, campo))
+
+    def _temperatura_com_ruido(self, valor: float) -> Decimal:
+        """Quantiza ``valor`` em uma casa decimal, soma ruido de +-0,1 C e aplica o envelope.
+
+        A quantizacao e obrigatoria: as faixas de temperatura do NEWS2 (7.5.1) sao contiguas apenas
+        na resolucao de uma casa, e ``calcular_news2`` levanta ``ValueError`` para 36.05.
+        """
+        bruto = Decimal(f"{valor:.1f}") + Decimal(self._rng.randint(-1, 1)) * _UM_DECIMO
+        return _limitar(bruto, "temperatura").quantize(_UM_DECIMO)
