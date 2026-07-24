@@ -63,6 +63,23 @@
   function classeSev(sev) { return "sev-" + (ROTULO_SEV[sev] ? sev : "normal"); }
   function rotuloSev(sev) { return ROTULO_SEV[sev] || "NORMAL"; }
 
+  /**
+   * Estado visual do card, separando AUSENCIA DE DADO de risco clinico.
+   *
+   * O dominio (services/comum/news2.py) so conhece baixa, media e alta. O valor "normal" que a
+   * projecao usa como padrao significa "ainda nao ha leitura", e nao "paciente avaliado e sem
+   * risco" -- desenhar a palavra NORMAL num leito que ninguem mediu faz um monitor mudo parecer um
+   * paciente estavel, que e o pior erro possivel num painel clinico. `score_news2 === null` e o
+   * discriminador confiavel: so existe escore depois que o triage-service avaliou uma leitura.
+   */
+  function estadoCard(card) {
+    if (card.estado === "livre") return { classe: "sev-livre", rotulo: "LIVRE" };
+    if (card.score_news2 === null || card.score_news2 === undefined) {
+      return { classe: "sev-sem-leitura", rotulo: "SEM LEITURA" };
+    }
+    return { classe: classeSev(card.severidade), rotulo: rotuloSev(card.severidade) };
+  }
+
   // ---------------------------------------------------------------- conexao
 
   function marcarConexao(estado) {
@@ -161,7 +178,7 @@
       el.dataset.leito = card.leito_id;
       elementosCard.set(card.leito_id, el);
     }
-    el.className = "card " + classeSev(card.severidade) + (card.estado === "livre" ? " card--livre" : "");
+    el.className = "card " + estadoCard(card).classe + (card.estado === "livre" ? " card--livre" : "");
     el.dataset.atualizado = card.atualizado_em || "";
     el.innerHTML = htmlCard(card);
     if (novo) inserirOrdenado(el, card.leito_id);
@@ -186,8 +203,9 @@
 
   function htmlCard(card) {
     var s = card.sinais || {};
-    var alta = card.severidade === "alta";
-    var badge = '<span class="badge">' + (alta ? "⚠ " : "") + rotuloSev(card.severidade) + "</span>";
+    var ec = estadoCard(card);
+    var alta = ec.rotulo === "ALTA";
+    var badge = '<span class="badge">' + (alta ? "⚠ " : "") + ec.rotulo + "</span>";
 
     var topo =
       '<div class="card__topo"><div><span class="card__leito">' + escapar(card.leito_id) + "</span>" +

@@ -332,6 +332,15 @@ body {
 .sev-normal { border-left-color: var(--sev-normal); }
 .sev-normal .badge { background: var(--sev-normal); }
 
+/* Leito vago: neutro, sem sugerir avaliacao clinica nenhuma. */
+.sev-livre { border-left-color: var(--sev-normal); }
+.sev-livre .badge { background: var(--sev-normal); }
+
+/* Leito OCUPADO que ainda nao recebeu leitura. Nao e "normal": e ausencia de dado, e pede acao
+   (ligar o monitor). Contorno tracejado + badge ambar para nao se confundir com a banda baixa. */
+.sev-sem-leitura { border-left-color: var(--avisar); border-left-style: dashed; }
+.sev-sem-leitura .badge { background: var(--avisar); }
+
 .sev-baixa { border-left-color: var(--sev-baixa); background: var(--baixa-bg); }
 .sev-baixa .badge { background: var(--sev-baixa); }
 .sev-baixa .card__escore .num { color: var(--sev-baixa); }
