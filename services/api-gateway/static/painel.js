@@ -149,10 +149,19 @@
     }
     // Alta/liberacao do leito derruba o monitoramento continuo; o resto so reflete o novo escore.
     verificarMonitores();
-    // Com o modo enfermaria armado, um leito que acabou de ficar ocupado ganha monitor sozinho --
+    // Com o modo enfermaria armado, um leito que ACABOU DE ficar ocupado ganha monitor sozinho --
     // e o equivalente a prender o monitor no leito quando o paciente chega. O gatilho e o proprio
     // evento da projecao, entao nao ha polling: a internacao publica, o SSE entrega, o monitor sobe.
-    if (enfermariaAtiva && card.estado === "ocupado" && !monitores.has(card.leito_id)) {
+    //
+    // Duas condicoes que parecem detalhe e nao sao: (1) exigir a TRANSICAO livre->ocupado, e nao
+    // apenas "esta ocupado e nao tem monitor". Sem isso, qualquer evento do leito re-atachava o
+    // monitor -- inclusive logo depois de a "Sequencia de deterioracao" te-lo parado de proposito
+    // para assumir o leito, e o monitor recem-criado entao matava a sequencia. As duas ficavam se
+    // derrubando. (2) nunca tomar o leito que a sequencia esta conduzindo.
+    var virouOcupado = card.estado === "ocupado" && (!antes || antes.estado !== "ocupado");
+    var conduzidoPelaSequencia = !!sequenciaAtiva && sequenciaAtiva.leito === card.leito_id;
+    if (enfermariaAtiva && virouOcupado && !conduzidoPelaSequencia &&
+        !monitores.has(card.leito_id)) {
       iniciarMonitor(card.leito_id, "estavel");
       estadoSessao("Modo enfermaria: monitor ligado automaticamente em " + card.leito_id + ".", "ok");
     }
@@ -1141,17 +1150,28 @@
       " evolui e os demais ficam estaveis. Novas internacoes entram sozinhas.", "ok");
   }
 
-  /** Desarma o modo e para todos os monitores. */
+  /**
+   * Desarma a politica de atachar automaticamente, SEM parar quem ja esta monitorando.
+   *
+   * "Modo enfermaria" e a regra "todo leito ocupado tem monitor", nao um interruptor geral dos
+   * monitores -- desliga-lo derrubando tudo fazia um clique a mais zerar a escalada em andamento.
+   * Para parar de fato existe o botao "Parar todos".
+   */
   function desligarEnfermaria() {
     enfermariaAtiva = false;
-    pararTodosMonitores("modo enfermaria desligado");
     atualizarBotaoEnfermaria();
+    estadoSessao(monitores.size
+      ? "Modo enfermaria desarmado: os " + monitores.size + " monitor(es) em curso continuam; " +
+        "novas internacoes e que nao entram mais sozinhas. Use \u201cParar todos\u201d para parar."
+      : "Modo enfermaria desarmado.", "ok");
   }
 
   function atualizarBotaoEnfermaria() {
     var b = el["op-enfermaria"];
     if (!b) return;
-    b.textContent = enfermariaAtiva ? "Parar modo enfermaria" : "Modo enfermaria (todos os leitos)";
+    b.textContent = enfermariaAtiva
+      ? "Desarmar modo enfermaria"
+      : "Modo enfermaria (todos os leitos)";
     b.setAttribute("aria-pressed", enfermariaAtiva ? "true" : "false");
     b.classList.toggle("btn--parar", enfermariaAtiva);
   }
