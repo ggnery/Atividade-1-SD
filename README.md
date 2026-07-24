@@ -164,11 +164,39 @@ vitals-service      Up 9 seconds (healthy)
 |---|---|---|
 | Swagger UI (documentação executável da API) | <http://localhost:8000/docs> | o botão `Authorize` aceita os três esquemas declarados: `BearerJWT`, `ApiKeyDispositivo` e `CookieSessao` |
 | OpenAPI 3.1 em JSON | <http://localhost:8000/openapi.json> | — |
-| Painel de Leitos | <http://localhost:8000/painel> | a casca HTML é pública; o *stream* exige sessão (veja §5) |
+| Painel de Leitos **+ Console de Operação** | <http://localhost:8000/painel> | a casca HTML é pública; o *stream* exige sessão (veja §5) |
 | Health check | <http://localhost:8000/health> | — |
 | Métricas do middleware | <http://localhost:8000/metrics> | — (protegível com `HOSPITALMQ_METRICS_PROTEGIDO=true`) |
 | UI de gerenciamento do RabbitMQ | <http://localhost:15672> | `hospital` / `hospital` |
 | PostgreSQL (host) | `localhost:5433`, banco `hospital` | veja a tabela de papéis em §5 |
+
+**A mesma página `/painel` traz o Console de Operação.** O mural continua sendo a tela limpa do
+projetor — o console é uma **gaveta lateral retrátil, fechada por padrão**, aberta pelo botão
+**Operar** no cabeçalho (e fechada pelo botão **Fechar** ou pela tecla `Esc`). Com ela aberta dá para
+conduzir a demonstração inteira **sem terminal**: entrar como `enf.ana` / `med.silva` / `aud.paula`,
+admitir um paciente em um leito livre, publicar sinais vitais por presets ou por uma sequência de
+deterioração, dar alta e ler o log das últimas 20 chamadas HTTP com método, rota, status e
+`correlation_id` clicável. O passo a passo está em §6.A.
+
+> O console é apenas **mais um cliente HTTP da mesma API pública**: ele chama `POST /auth/token`,
+> `POST /pacientes`, `POST /internacoes`, `POST /sinais`, `POST /internacoes/{id}/alta` e `GET /leitos`
+> — exatamente as rotas de §6.B. Não há endpoint privilegiado, rota nova nem acesso a banco a partir
+> do navegador; tudo que o console faz, um `curl` faz igual.
+
+**Nota para quem for mexer no front.** O painel e o console são três arquivos estáticos —
+`services/api-gateway/static/painel.html`, `painel.css` e `painel.js` — em HTML, CSS e JavaScript
+puros: sem framework, sem CDN, sem etapa de build (R11.6). Eles são **copiados para dentro da imagem**
+pelo `Dockerfile` e não há *bind mount*, então depois de editar qualquer um deles é obrigatório
+reconstruir:
+
+```bash
+docker compose up -d --build api-gateway   # publica os estáticos novos
+docker compose restart api-gateway         # NÃO publica: reinicia o contêiner com a imagem antiga
+```
+
+Se a página continuar igual depois de uma edição, é quase sempre este o motivo — confirme com
+`curl -s http://localhost:8000/painel | grep -c "Console de operação"` (deve ser ≥ 1) antes de
+procurar erro no JavaScript.
 
 ---
 
@@ -226,14 +254,133 @@ docker compose exec -e PGPASSWORD=demo-svc_vitals postgres \
 próprio Swagger — o navegador guarda o cookie — e só então abrir <http://localhost:8000/painel>.
 Na linha de comando o *stream* também aceita `Authorization: Bearer`.
 
+O caminho mais curto, porém, é o próprio Console de Operação: abrir <http://localhost:8000/painel>,
+clicar em **Operar** e depois em **Entrar**. O `POST /auth/token` disparado pelo console é uma
+requisição *same-origin*, então o navegador guarda o mesmo cookie `hmq_session` e o mural passa a
+receber o *stream* sem escala pelo Swagger. O JWT em si fica **apenas em memória** — nunca em
+`localStorage` ou `sessionStorage` — e some ao recarregar a página.
+
 ---
 
 ## 6. Roteiro da demonstração
 
-Todos os blocos abaixo foram executados contra a stack de pé, na ordem em que aparecem. Rode-os a
+Há **duas formas de conduzir a mesma demonstração**, e elas não competem:
+
+- **§6.A — pela interface**, no Console de Operação embutido em `/painel`. É o caminho
+  **recomendado para a apresentação**: acontece na tela que o projetor já está mostrando, sem alternar
+  para o terminal, e cada ação move os cards ao vivo.
+- **§6.B — pela API com `curl`**, o **contrato cru**. É a evidência de que o sistema é uma API HTTP
+  comum, é o que a suíte `tests/e2e` exercita, e é o caminho para os cenários que o console não cobre
+  (timeout de RPC, inspeção da DLQ pelo *management* do RabbitMQ, *competing consumers*).
+
+As duas falam com **as mesmas rotas**: o console é um cliente HTTP como o `curl`, sem endpoint
+privilegiado nem acesso a banco. Se algo funciona em uma, funciona na outra. As subseções numeradas
+(§6.1 a §6.11) pertencem a §6.B e são referenciadas pelo resto do README.
+
+Todos os blocos de §6.B foram executados contra a stack de pé, na ordem em que aparecem. Rode-os a
 partir da raiz do repositório.
 
-### 6.1 Obter um token
+---
+
+### 6.A Pela interface — Console de Operação (recomendado para a apresentação)
+
+Pré-requisito: `docker compose up -d --wait` e a stack saudável (§4). Nada mais — nem `curl`, nem
+`jq`, nem token exportado.
+
+**1. Abrir o mural e a gaveta.** Vá a <http://localhost:8000/painel>. O mural é a tela limpa: um card
+por leito, coluna **Alertas recentes** à direita, indicador de conexão e relógio no cabeçalho. Clique
+em **Operar** para abrir o Console de Operação à direita (`Esc` ou **Fechar** recolhem a gaveta).
+
+**2. `1 Sessão` — entrar.** Os campos **Usuário** e **Senha** já vêm com `enf.ana` / `demo123`.
+Clique em **Entrar**: é um `POST /auth/token`, e a linha de estado passa a
+`Sessão ativa: enf.ana · papel enfermeiro · token em memória (expira em 1800 s)`. O JWT fica **só em
+memória**; o cookie `hmq_session` que a resposta grava é o que autoriza o *stream* do mural (§5). Ao
+lado ficam os chips de **troca rápida de papel** — `enf.ana · enfermeiro`, `med.silva · médico`,
+`aud.paula · auditor` — e o campo **API Key do dispositivo (cabeçalho X-API-Key)**, pré-preenchido com
+`dev-monitor-l07`, porque telemetria se autentica por API Key e **nunca** por JWT (**R4.5**).
+
+**3. `2 Admitir paciente` — criar o paciente e interná-lo.** O **Nome do paciente** já vem sorteado e
+o **Documento** auto-gerado (`DOC-<epoch>`, para o bloco ser re-executável); **Sortear paciente**
+troca os dois. Escolha um leito no `select` **Leito livre**, que é populado com os leitos livres lidos
+de `GET /leitos`, e clique em **Admitir**. Um clique dispara **duas** chamadas em sequência:
+`POST /pacientes` e depois `POST /internacoes` — ambas **RPC sobre fila** (`paciente.criar`,
+`paciente.admitir`), respondidas dentro da própria requisição HTTP. O card do leito deixa de ser
+`(livre)` e passa a mostrar o nome do paciente. Se algum `select` de leito parecer defasado, o botão
+**Recarregar leitos** de `1 Sessão` refaz o `GET /leitos` e reconcilia os três.
+
+**4. `3 Publicar sinais vitais` — a deterioração ao vivo.** Escolha o leito recém-admitido no `select`
+**Leito ocupado** e clique em **Sequência de deterioração**: são 8 leituras `POST /sinais` a cada
+1,5 s, piorando progressivamente, com o indicador de progresso mostrando `1/8` … `8/8` e um botão
+**Cancelar** ao lado. Olhe para o mural enquanto isso: o card muda de cor a cada leitura, sem
+recarregar a página (**R11.2**), porque o `triage-service` recalcula o NEWS2 a cada evento
+(**R6.2**). Nas últimas leituras o escore cruza 5 e aparece um componente isolado pontuando 3: o card
+fica vermelho e um alerta de severidade **alta** entra no topo da coluna **Alertas recentes**
+(**R6.3**). Os presets fazem o mesmo em uma leitura só: **Estável** (NEWS2 0), **Atenção** (NEWS2 3)
+e **Crítico** (NEWS2 ≥ 7, dispara alerta) — o quarto, **Fora de faixa**, é o passo 5.
+
+**5. Preset `Fora de faixa` — a DLQ sem retentativa.** Ainda em `3 Publicar sinais vitais`, clique em
+**Fora de faixa** (SpO₂ 20). A borda **aceita** com `202`, porque 20 é um inteiro válido de 0 a 100 na
+validação estrutural; o `vitals-service` é que recusa pela faixa fisiológica (50–100) e trata como
+`PermanentError` — a mensagem vai **direto à DLQ, na tentativa 1, sem retentativa** (**R6.6**). A
+linha de estado do console avisa isso em português; a prova fica no log do serviço:
+
+```bash
+docker compose logs vitals-service --since 60s --no-log-prefix \
+  | jq -Rc 'fromjson? // empty | select(.evento=="mensagem.dlq") | {servico,evento,tentativa}'
+# {"servico":"vitals-service","evento":"mensagem.dlq","tentativa":1}
+```
+
+**6. (Opcional) Retentativa 1 s / 2 s / 4 s pelo console.** O leito **`UTI-03`** tem o canal de
+notificação sabotado por configuração (`ALERT_FAILURE_LEITOS`, §6.5). Admita um paciente em `UTI-03`
+no passo 3 e mande o preset **Crítico**: o alerta é gerado, a notificação falha com `TransientError`,
+e o middleware espera 1 s, 2 s e 4 s antes de descartar (**R6.5**). Verificado nesta stack, com o
+`correlation_id` da própria linha do log do console:
+
+```bash
+docker compose logs alert-service --since 60s --no-log-prefix \
+  | jq -Rc 'fromjson? // empty
+            | select(.evento=="mensagem.retentativa" or .evento=="mensagem.dlq")
+            | {evento, tentativa, correlation_id}'
+# {"evento":"mensagem.retentativa","tentativa":1,"correlation_id":"10d23ef9-..."}
+# {"evento":"mensagem.retentativa","tentativa":2,"correlation_id":"10d23ef9-..."}
+# {"evento":"mensagem.retentativa","tentativa":3,"correlation_id":"10d23ef9-..."}
+# {"evento":"mensagem.dlq",        "tentativa":4,"correlation_id":"10d23ef9-..."}
+```
+
+**7. O `403` ao vivo.** Clique no chip **`aud.paula · auditor`** (ele já faz o login) e tente
+**Admitir** de novo. A resposta é `403` e o **`5 Log de ações`** mostra o corpo RFC 7807 destrinchado
+em `type`, `title`, `status` e `detail` — `papel 'auditor' nao autorizado para esta operacao`
+(**R4.4**). O mesmo vale para **Dar alta**. A falha vira demonstração do contrato de erro, em vez de
+um susto na apresentação. O console avisa que o papel `auditor` não enxerga `/leitos` nem o *stream*;
+o mural continua desenhado com a projeção já recebida, e o passo seguinte devolve a sessão a um papel
+clínico.
+
+**8. `5 Log de ações` — do clique ao rastreio distribuído.** O log guarda as **últimas 20 chamadas**,
+mais recente no topo, cada uma com método, rota, status HTTP e o `correlation_id` em fonte mono.
+**Clique no `correlation_id`**: ele é copiado para a área de transferência e o console imprime o
+comando pronto `./scripts/trace.sh <cid>`. Cole no terminal e saia da borda para dentro do barramento
+— o mesmo identificador aparece nas linhas dos cinco processos, porque ele é preservado em toda a
+cadeia (**R5.3**). O detalhamento da saída está em §6.7.
+
+**9. `4 Dar alta` — reiniciar a cena.** Volte para o chip **`med.silva · médico`**, escolha o leito no
+`select` **Leito ocupado** de `4 Dar alta`, confira o **Motivo** (`Alta médica`) e clique em **Dar
+alta**. O leito é liberado, volta a aparecer no `select` de leitos livres e a demonstração pode
+recomeçar do passo 3. Dar alta exige papel **médico** ou **admin** — com `enf.ana` ou `aud.paula` a
+resposta é `403` (**R4.4** outra vez).
+
+O que **não** está no console e continua em §6.B: o timeout de RPC → `504` (§6.8), a leitura do
+conteúdo da DLQ pelo *management* do RabbitMQ (§6.5), os cenários do simulador (§6.9) e o teste de
+*competing consumers* (§6.10).
+
+---
+
+### 6.B Pela API com `curl` — o contrato cru
+
+Este é o caminho que evidencia o **contrato HTTP puro**, sem navegador no meio, e é exatamente o que a
+suíte `tests/e2e` exercita (§7). Cada bloco abaixo tem um equivalente no console; o inverso não é
+verdade — §6.8, §6.9 e §6.10 só existem aqui.
+
+#### 6.1 Obter um token
 
 ```bash
 export TOKEN=$(./scripts/token.sh)            # enf.ana / demo123
@@ -256,7 +403,7 @@ curl -sS -X POST http://localhost:8000/pacientes -H "Authorization: Bearer $T_AU
 
 Os erros seguem RFC 7807 (`application/problem+json`) e sempre carregam `correlation_id`.
 
-### 6.2 Criar um paciente e interná-lo
+#### 6.2 Criar um paciente e interná-lo
 
 O `db/seed.sql` semeia 20 leitos e 10 pacientes, mas **nenhuma internação** — uma internação só
 nasce da operação RPC, que é justamente o caminho que a demonstração precisa exercitar. Por isso o
@@ -288,7 +435,7 @@ precisa casar `^[A-Z]{2,4}-\d{2}$` na borda (`services/api-gateway/schemas.py`) 
 `^[A-Z]{3}-[0-9]{2}$` no banco (`ck_leitos_codigo`, em `db/schema.sql`) — o padrão do banco é o mais
 restritivo dos dois. `GET /leitos` mostra quais estão livres.
 
-### 6.3 Publicar sinais vitais
+#### 6.3 Publicar sinais vitais
 
 > **`coletado_em` é obrigatório e precisa ser ISO-8601 com fuso.** O corpo sem ele volta `422`.
 > O campo de saturação chama-se `saturacao_o2`, e a rota é `POST /sinais` com `leito_id` **no
@@ -333,7 +480,7 @@ echo "$CID"
 Se o leito não tiver internação ativa, a resposta é `409 leito-nao-ocupado` — o gateway resolve
 `leito_id → internacao_id` pela projeção antes de publicar.
 
-### 6.4 Ver o alerta, o painel e o prontuário
+#### 6.4 Ver o alerta, o painel e o prontuário
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" \
@@ -358,7 +505,7 @@ O prontuário é montado por dois RPC sobre fila: `prontuario.consultar` no `adm
 `sinais.ultimos` no `vitals-service`. O painel em <http://localhost:8000/painel> reflete o mesmo
 estado em tempo real, empurrado por SSE (nenhum *polling*).
 
-### 6.5 Retentativa e DLQ (o caminho por esgotamento)
+#### 6.5 Retentativa e DLQ (o caminho por esgotamento)
 
 O `alert-service` tem um canal de notificação sabotado **por configuração**, e só para os leitos
 listados em `ALERT_FAILURE_LEITOS` — padrão `UTI-03`. Interne um paciente em `UTI-03` (mesmo bloco
@@ -429,7 +576,7 @@ curl -sS -u hospital:hospital -X POST \
 O `Envelope` original vai para a DLQ **intacto**, dentro da chave `envelope`; o diagnóstico entra
 ao lado, em `falha`. Nada é reescrito.
 
-### 6.6 DLQ imediata (o caminho permanente)
+#### 6.6 DLQ imediata (o caminho permanente)
 
 Uma saturação de 20 % passa na validação estrutural da borda (0–100) e é recusada pela faixa
 fisiológica do `vitals-service` (50–100). Isso é `PermanentError`: retentar não mudaria o
@@ -444,7 +591,7 @@ docker compose logs vitals-service --since 60s --no-log-prefix \
 # {"servico":"vitals-service","evento":"mensagem.dlq","tentativa":1}
 ```
 
-### 6.7 Rastrear um `correlation_id`
+#### 6.7 Rastrear um `correlation_id`
 
 ```bash
 ./scripts/trace.sh "$CID"                    # todas as linhas JSON daquela requisição
@@ -488,7 +635,7 @@ docker compose exec -e PGPASSWORD=demo-svc_audit postgres psql -h 127.0.0.1 -U s
 (Os números dependem de quanto o sistema rodou; o que a tabela demonstra é que **um único
 consumidor vê todos os tipos de evento** sem que ninguém precise se registrar nele.)
 
-### 6.8 Timeout de RPC → `504`
+#### 6.8 Timeout de RPC → `504`
 
 ```bash
 docker compose stop admission-service
@@ -508,7 +655,7 @@ docker compose start admission-service
 HTTP 504 em 5.011218s
 ```
 
-### 6.9 Os quatro cenários do simulador
+#### 6.9 Os quatro cenários do simulador
 
 O simulador é determinístico por semente (`SEMENTE_SIMULADOR`): mesma semente, mesma sequência.
 
@@ -542,7 +689,7 @@ Duas advertências verificadas na prática:
 - O comando precisa da forma **completa** `... run --rm bedside-monitor python clients/bedside_monitor/__main__.py --cenario X`. O `docker compose run` **substitui** o `command` do serviço; passar só `--cenario X` faz o Docker tentar executar `--cenario` como programa e falhar.
 - O leito alvo precisa ter **internação ativa**, senão todo `POST /sinais` volta `409 leito-nao-ocupado`. Todos os cenários já usam leitos que existem no seed — `estavel` em `UTI-01`, `deterioracao` em `UTI-02`, `falha-consumidor` em `UTI-03`, `fora-de-faixa` em `ENF-08` e `tempestade` a partir de `ENF-01` — mas é preciso internar alguém neles antes (§6.2). Use `--leito` para escolher outro.
 
-### 6.10 Competing consumers
+#### 6.10 Competing consumers
 
 ```bash
 docker compose up -d --scale alert-service=3
@@ -554,7 +701,7 @@ docker compose up -d --scale alert-service=1
 Como o ACK é manual e só ocorre depois do handler, a mensagem em voo da réplica morta é
 reentregue a outra réplica; a idempotência por `(consumidor, message_id)` impede o efeito duplicado.
 
-### 6.11 Nota sobre `scripts/`
+#### 6.11 Nota sobre `scripts/`
 
 Os quatro scripts — `token.sh`, `sinais.sh`, `prontuario.sh` e `trace.sh` — foram executados contra
 a stack no ar e funcionam como documentado. O `sinais.sh` publica no leito `UTI-01` por padrão;
@@ -646,6 +793,9 @@ uv run --extra dev ruff check .
 ├── services/                   # A APLICAÇÃO que exercita o middleware
 │   ├── comum/                  #   NEWS2 puro, sessão SQLAlchemy, app base com /health e /metrics
 │   ├── api-gateway/            #   FastAPI: rotas, schemas Pydantic, RFC 7807, projeção, SSE, painel
+│   │   └── static/             #     painel.html · painel.css · painel.js — mural SSE + Console
+│   │                           #     de Operação (§6.A), HTML/CSS/JS puros, sem build
+
 │   ├── admission-service/      #   RpcServer (paciente.*, prontuario.consultar) + outbox
 │   ├── vitals-service/         #   valida faixa fisiológica e persiste sinais
 │   ├── triage-service/         #   calcula NEWS2 e publica alerta.gerado
@@ -673,11 +823,11 @@ uv run --extra dev ruff check .
 
 | Item obrigatório | Onde está | Como verificar |
 |---|---|---|
-| Comunicação entre cliente e servidor | `clients/bedside_monitor/` → `services/api-gateway/rotas/sinais.py` → broker → `services/vitals-service/handler.py` | §6.3 e o painel reagindo |
+| Comunicação entre cliente e servidor | `clients/bedside_monitor/` → `services/api-gateway/rotas/sinais.py` → broker → `services/vitals-service/handler.py` | §6.3 e o painel reagindo (ou §6.A, passo 4) |
 | **Middleware desenvolvido pelo grupo** | `hospitalmq/` inteiro: `envelope.py`, `publisher.py`, `consumer.py`, `retry.py`, `idempotency.py`, `rpc.py`, `transport/base.py` | leitura do código; nenhum serviço importa `aio_pika` diretamente |
-| Autenticação simples (JWT ou API Key) | `hospitalmq/auth.py`; `services/api-gateway/dependencias.py`; `services/api-gateway/rotas/auth.py` | §6.1 (`401` e `403`) |
-| Registro de logs com timestamp | `hospitalmq/logging.py` — toda linha é JSON com `timestamp`, `nivel`, `servico`, `evento` e `correlation_id`, e um *processor* mascara dado pessoal | §6.7 (`scripts/trace.sh`) |
-| Tratamento de exceções e timeout | `hospitalmq/errors.py`, `hospitalmq/retry.py`, `hospitalmq/consumer.py` (DLQ), `hospitalmq/rpc.py` (timeout), `services/api-gateway/erros.py` (RFC 7807) | §6.5, §6.6 e §6.8 |
+| Autenticação simples (JWT ou API Key) | `hospitalmq/auth.py`; `services/api-gateway/dependencias.py`; `services/api-gateway/rotas/auth.py` | §6.1 (`401` e `403`); o `403` também ao vivo em §6.A, passo 7 |
+| Registro de logs com timestamp | `hospitalmq/logging.py` — toda linha é JSON com `timestamp`, `nivel`, `servico`, `evento` e `correlation_id`, e um *processor* mascara dado pessoal | §6.7 (`scripts/trace.sh`), partindo do `correlation_id` clicável de §6.A, passo 8 |
+| Tratamento de exceções e timeout | `hospitalmq/errors.py`, `hospitalmq/retry.py`, `hospitalmq/consumer.py` (DLQ), `hospitalmq/rpc.py` (timeout), `services/api-gateway/erros.py` (RFC 7807) | §6.5, §6.6 e §6.8; RFC 7807 formatado no log do console (§6.A, passos 5 a 7) |
 | Documentação da API (Swagger/OpenAPI) | `services/api-gateway/main.py` + `schemas.py` (OpenAPI 3.1 gerado do código) | <http://localhost:8000/docs> |
 | Testes funcionais | `tests/unit/` (117) e `tests/e2e/` (8) | §7 |
 | Repositório GitHub | `git@github.com:ggnery/Atividade-1-SD.git` | — |

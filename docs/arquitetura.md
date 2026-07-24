@@ -99,7 +99,8 @@ duplicação.
 ### 1.4 Escopo desta entrega
 
 **No escopo:** a biblioteca `hospitalmq` completa, com transporte AMQP e transporte em memória; os
-seis serviços da aplicação; o simulador de monitor de leito; o painel de leitos; a suíte de testes;
+seis serviços da aplicação; o simulador de monitor de leito; o painel de leitos com o **Console de
+Operação** (subseção 3.8); a suíte de testes;
 a documentação da API em OpenAPI; e o ambiente completo em Docker Compose, executável com um único
 comando.
 
@@ -758,7 +759,7 @@ literal e sem metáfora:
 
 A decisão de fronteira mais importante desta tabela: **o `api-gateway` pertence à camada de
 middleware, não à camada de servidor**. Ele não é dono de nenhum dado e não possui sessão de banco
-clínico. Isso é detalhado no princípio (a) da subseção 3.6.
+clínico. Isso é detalhado no princípio (a) da subseção 3.7.
 
 > **Por que "Middleware" ocupa três linhas.** O enunciado trata "middleware" como uma camada; a
 > literatura de sistemas distribuídos trata middleware como *software de ligação entre processos*.
@@ -783,7 +784,7 @@ clínico. Isso é detalhado no princípio (a) da subseção 3.6.
 flowchart LR
     subgraph CLI["Camada Cliente"]
         BM["Cliente_Leito<br/>clients/bedside_monitor<br/>Python asyncio + httpx"]
-        NAV["Navegador<br/>Painel de Leitos<br/>HTML CSS JS puro"]
+        NAV["Navegador<br/>Painel de Leitos + Console de Operacao<br/>HTML CSS JS puro"]
     end
 
     subgraph BORDA["Camada Middleware - borda HTTP"]
@@ -807,6 +808,7 @@ flowchart LR
     BM -->|"HTTP POST /sinais + header X-API-Key"| GW
     NAV -->|"HTTP GET /painel e SSE em GET /painel/stream"| GW
     NAV -->|"HTTP GET /pacientes/id/prontuario + Bearer JWT"| GW
+    NAV -->|"Console: POST /auth/token, /pacientes, /internacoes,<br/>/internacoes/id/alta com Bearer JWT<br/>e POST /sinais com X-API-Key"| GW
 
     GW -->|"publica sinais.coletados e acesso.negado"| MQ
     GW -->|"RPC em hospital.rpc: paciente.criar, paciente.admitir,<br/>paciente.dar-alta, prontuario.consultar, leitos.snapshot,<br/>sinais.ultimos"| MQ
@@ -842,7 +844,7 @@ serviço. Essa é a propriedade verificável do estilo adotado.
 | Componente | Responsabilidade | Consome | Publica | Acessa o banco |
 |---|---|---|---|---|
 | `clients/bedside_monitor` | Simular um monitor de beira-leito: gerar sinais vitais periodicamente e reproduzir os cenários da demonstração — estável, deterioração, falha com retentativa e mensagem em DLQ | — | `POST /sinais` no gateway | Não |
-| Navegador / painel de leitos | Renderizar um card por leito ocupado, destacar severidade alta e listar alertas em ordem decrescente de horário | Fluxo SSE `GET /painel/stream` | — | Não |
+| Navegador / painel de leitos | Renderizar um card por leito ocupado, destacar severidade alta e listar alertas em ordem decrescente de horário. O **Console de Operação** (subseção 3.8) é uma gaveta da mesma página que dispara as chamadas da demonstração — como cliente HTTP comum, sem caminho privilegiado | Fluxo SSE `GET /painel/stream` | `POST /auth/token`, `/pacientes`, `/internacoes`, `/sinais`, `/internacoes/{id}/alta` no gateway | Não |
 | `services/api-gateway` | Autenticar JWT e API Key, validar corpo, gerar e propagar o `correlation_id`, traduzir REST em mensagens, expor OpenAPI, servir o painel e manter a **projeção em memória** dos leitos | `q.gateway.projecao` — bindings `paciente.*`, `leito.*`, `alerta.*`, `sinais.registrados`, `sinais.rejeitados` | `sinais.coletados`, `acesso.negado`; requisições RPC em `hospital.rpc` | **Não — por construção** |
 | `services/admission-service` | Dono dos agregados `Paciente`, `Internacao` e `Leito`. Atende as operações RPC de criação, admissão, alta, prontuário e snapshot de leitos. Publica mudanças de estado por outbox transacional | `q.rpc.admission` | `paciente.admitido`, `paciente.alta`, `leito.ocupado`, `leito.liberado`, `prontuario.consultado` | Sim — schema `clinico` |
 | `services/vitals-service` | Validar faixa fisiológica, persistir a leitura e promovê-la a evento de domínio. Fora de faixa vira `PermanentError` e vai direto à DLQ. Também atende a operação RPC `sinais.ultimos` | `q.vitals.sinais-coletados`, `q.rpc.vitals` | `sinais.registrados`, `sinais.rejeitados` | Sim — schema `vitais` |
@@ -1198,7 +1200,112 @@ memória e sobrevive à indisponibilidade do PostgreSQL. O custo é a volatilida
 proporcional ao número de telas abertas para exibir dados que quase sempre não mudaram, e não
 permitiria sinalizar o estado desconectado, porque em *polling* não existe "conexão" para cair.
 
-### 3.8 Atributos de qualidade e como são atendidos
+### 3.8 O Painel de Leitos e o Console de Operação
+
+O `Painel_de_Leitos` (R11) é servido pelo próprio `api-gateway` em `GET /painel` e alimentado pela
+projeção em memória descrita no princípio (g): um mural com um card por leito, a coluna de alertas
+recentes, o indicador de conexão do SSE e um rodapé que exibe o último evento aplicado e o
+`correlation_id` dele.
+
+**Por que o console existe.** Até esta versão o painel era **somente leitura**: para produzir
+qualquer evento na demonstração era preciso digitar `curl` no terminal, alternando JWT, API Key e
+corpo JSON a cada passo. Isso é lento, propenso a erro de digitação e obriga a alternar entre a tela
+do projetor e o terminal — três defeitos caros dentro dos 15 minutos de apresentação (restrição C5).
+O **Console de Operação** é a resposta: uma **gaveta lateral retrátil dentro da própria página
+`/painel`**, **fechada por padrão** — o mural continua sendo a tela limpa do projetor — e aberta pelo
+botão "Operar" do cabeçalho (`Esc` fecha; a gaveta fechada sai da ordem de tabulação por `inert`).
+
+| # | Seção do console | O que faz | Endpoints que chama |
+|---|---|---|---|
+| 1 | **Sessão** | Login com `enf.ana`/`demo123` pré-preenchido; chips de troca rápida de papel entre `enf.ana` (enfermeiro), `med.silva` (médico) e `aud.paula` (auditor); campo separado para a API Key do dispositivo, pré-preenchido com `dev-monitor-l07` | `POST /auth/token`, `GET /leitos` |
+| 2 | **Admitir paciente** | Nome fictício sorteado, documento gerado e um `<select>` populado com os leitos **livres**; um botão dispara as duas chamadas em sequência | `POST /pacientes` → `POST /internacoes` |
+| 3 | **Publicar sinais vitais** | `<select>` com os leitos **ocupados** e quatro presets que montam o corpo completo, com `coletado_em` em ISO-8601 UTC: *Estável* (NEWS2 0), *Atenção* (NEWS2 3), *Crítico* (NEWS2 19, com componente crítico — dispara alerta) e *Fora de faixa* (`saturacao_o2 = 20`). Além deles, a **sequência de deterioração**: 8 leituras a cada 1,5 s, piorando progressivamente, com indicador de progresso e botão Cancelar | `POST /sinais` com `X-API-Key` |
+| 4 | **Dar alta** | Libera o leito para repetir a demonstração; exige papel `medico` ou `admin` | `POST /internacoes/{id}/alta` |
+| 5 | **Log de ações** | As últimas 20 chamadas, com método, rota, status HTTP e o `correlation_id` em fonte mono, clicável: o clique copia o identificador e mostra o comando pronto `./scripts/trace.sh <cid>`. Quando a resposta é erro, o corpo RFC 7807 aparece formatado (`type`, `title`, `status`, `detail`) | — |
+
+Três desses controles existem para tornar um requisito visível na tela em vez de citado no slide.
+A troca de papel demonstra **R4.4** ao vivo: o auditor recebe `403` ao admitir ou dar alta, e o
+console exibe o `application/problem+json` da recusa — a falha vira demonstração do contrato de erro.
+O campo separado de API Key materializa **R4.5**: telemetria é autenticada por `X-API-Key` e nunca
+por JWT, de modo que publicar sinais não depende de haver sessão humana aberta. O preset *Fora de
+faixa* exercita o caminho de rejeição: a borda aceita (`202`), o `vitals-service` recusa como
+`PermanentError` e a mensagem vai **direto para a DLQ, sem retentativa** — o contraste exato com o
+`TransientError` da subseção 3.6.
+
+#### 3.8.1 O console não é um caminho privilegiado
+
+Este é o ponto que interessa arquiteturalmente. O Console de Operação é **apenas mais um cliente HTTP
+da mesma API pública**. Concretamente:
+
+- **Mesma autenticação.** Ele obtém o JWT em `POST /auth/token` e o envia em `Authorization: Bearer`,
+  exatamente como o `curl` do roteiro; para `POST /sinais` ele troca para `X-API-Key`, porque o
+  endpoint só aceita portador do tipo `dispositivo`. Não há sessão especial nem *bypass* de papel: o
+  `403` do auditor acontece para o console pelo mesmo caminho de código que para qualquer outro
+  cliente.
+- **Mesmos contratos de payload.** Os corpos que ele monta são os mesmos que os modelos Pydantic da
+  borda validam; um campo ausente ou malformado devolve `422` para ele como devolveria para o `curl`.
+- **Mesmos erros.** Ele não inventa mensagem de erro: exibe o `application/problem+json` como veio no
+  fio, com o `correlation_id` da resposta.
+- **Nenhum endpoint especial e nenhuma rota nova.** Todas as chamadas do console já constam da tabela
+  da subseção 7.2. O gateway não ganhou nenhuma rota para atendê-lo.
+- **Nenhum acesso a banco.** Vale para o console a mesma propriedade do princípio (a): o
+  `api-gateway` não tem sessão de banco clínico, logo não existe atalho a oferecer. As listas de
+  leitos livres e ocupados vêm da projeção em memória e de `GET /leitos`, e a alta viaja por RPC
+  sobre fila até o `admission-service`, como qualquer outra escrita.
+
+A consequência é direta: **tudo o que o console faz, um `curl` faz igual** — e é por isso que a
+demonstração por `curl` permanece no roteiro, como o caminho de contrato. Os dois caminhos não
+competem; o console é o caminho principal e confortável, o `curl` é a prova de que não há mágica na
+interface e é o que os testes ponta a ponta exercitam, falando HTTP com a mesma borda. Que uma
+interface de operação inteira tenha sido construída **sem uma linha de backend nova** é evidência de
+que a superfície REST da subseção 7.2 é boa o bastante para ser consumida por uma UI sem adaptação —
+o que só é possível porque o `api-gateway` é a única borda do sistema, com autenticação, validação e
+tradução para mensagem concentradas nele (R7.2).
+
+**R11.6 respeitado.** O console é HTML, CSS e JavaScript puros — sem framework, sem CDN, sem *build*,
+sem dependência de rede externa em tempo de execução. Ele vive nos **três arquivos que já existiam**,
+servidos pelo próprio gateway a partir de `services/api-gateway/static/`:
+
+| Arquivo | Rota que o serve | O que o console acrescentou |
+|---|---|---|
+| `painel.html` | `GET /painel` | O elemento `<aside id="console">` com as cinco seções e o botão "Operar" no cabeçalho |
+| `painel.js` | `GET /painel/painel.js` | Um bloco isolado no fim do mesmo IIFE: sessão, chamadas HTTP, presets, sequência e log |
+| `painel.css` | `GET /painel/painel.css` | Os estilos da gaveta, dos chips de papel, dos presets e do log |
+
+#### 3.8.2 Segurança do console e limitação assumida
+
+- **O JWT vive apenas em memória.** O token é guardado em uma variável do módulo
+  (`sessao.token`) e **nunca** em `localStorage` ou `sessionStorage`; recarregar a página o descarta,
+  e o botão "Sair" o apaga explicitamente. A decisão é a mesma do cookie `HttpOnly` usado pelo
+  `/painel/stream`: nenhum material de credencial fica em armazenamento persistente do navegador,
+  onde qualquer script sobreviveria ao fim da sessão para lê-lo.
+- **O código do console não usa `innerHTML` com dado vindo da API.** Cada nó do log e de cada
+  `<select>` é criado com `createElement` e preenchido por `textContent`, o que fecha por construção
+  a injeção de HTML a partir de um `detail` de erro ou de um nome de paciente. (O mural, código
+  anterior ao console, monta os cards com `innerHTML` e escapa cada valor por uma função `escapar()`
+  explícita — a proteção existe, mas depende de o desenvolvedor lembrar de chamá-la; o console adota
+  a forma que não depende de lembrança.)
+- **Limitação assumida, declarada aqui e não escondida:** as credenciais de demonstração
+  (`enf.ana`/`demo123` e a API Key `dev-monitor-l07`) estão **pré-preenchidas na interface**. Isso
+  seria inaceitável em produção. É aceitável nesta entrega por duas razões conjuntas: as credenciais
+  e os pacientes são **fictícios** (restrição C6, limitação L15) e o ambiente é local, no Docker
+  Compose, sem exposição externa. Em um ambiente real, o campo entraria vazio e a base de usuários de
+  demonstração não existiria.
+
+**Publicação dos estáticos — armadilha operacional documentada.** Os três arquivos são **copiados
+para dentro da imagem** pelo `Dockerfile` (`COPY services/ ./services/`) e o serviço `api-gateway`
+**não tem *bind mount*** no `docker-compose.yml`. Portanto, depois de editar qualquer arquivo de
+`services/api-gateway/static/`:
+
+```bash
+docker compose up -d --build api-gateway   # correto: reconstrói a imagem e publica os estáticos
+docker compose restart api-gateway         # NÃO publica: reinicia o processo com a imagem antiga
+```
+
+Um `restart` reinicia o contêiner com a camada de imagem antiga e serve a versão anterior da página —
+sintoma que se confunde facilmente com cache do navegador. O caminho correto é `up -d --build`.
+
+### 3.9 Atributos de qualidade e como são atendidos
 
 | Atributo | Táticas e mecanismos concretos | Limite conhecido |
 |---|---|---|
@@ -2326,6 +2433,11 @@ respondido pelo próprio processo, sem tocar o broker.
 | GET | `/docs`, `/openapi.json` | nenhuma | Swagger UI e OpenAPI 3.1 gerados pelo FastAPI | LOCAL |
 | GET | `/` | nenhuma | redireciona para `/painel` | LOCAL |
 
+**Esta tabela é toda a superfície, inclusive para a interface.** O Console de Operação (subseção 3.8)
+usa exclusivamente linhas desta tabela — `POST /auth/token`, `POST /pacientes`, `POST /internacoes`,
+`POST /sinais`, `POST /internacoes/{id}/alta` e `GET /leitos` — e não acrescentou nenhuma rota. Não
+existe endpoint reservado à UI.
+
 Os cinco serviços consumidores expõem também `/health`, `/health/ready` e `/metrics`, construídos
 por `services/comum/app.py`. Todas as respostas — inclusive as de erro — carregam o cabeçalho
 `X-Correlation-ID`.
@@ -2744,6 +2856,27 @@ exclusiva do gateway, e o timeout de 5 s é do chamador.
 | `scripts/prontuario.sh` | Consulta `GET /pacientes/{id}/prontuario`, exercitando o caminho RPC |
 | `scripts/trace.sh` | Filtra os logs dos contêineres por `correlation_id`, reconstruindo o fluxo |
 
+### 10.10 Console de Operação exercitado no navegador
+
+Observado em `http://localhost:8000/painel`, com a stack no ar e sem nenhum terminal aberto:
+
+| Verificação | O que foi observado |
+|---|---|
+| Sessão | `POST /auth/token` com `enf.ana`/`demo123` devolve `200` e `role: "enfermeiro"`; o token fica em memória e some ao recarregar a página |
+| Sequência de deterioração | As **8 leituras** foram publicadas a cada 1,5 s, com o indicador chegando a **8/8**; o card do leito mudou de cor ao vivo, de baixa a alta severidade |
+| Alertas em tempo real | As três últimas leituras cruzam o limiar e geram alerta: **NEWS2 9 → 13 → 19**, todas de severidade **alta**, as duas últimas com **componente crítico**; os alertas apareceram no topo da coluna sem recarregar a página |
+| Log de ações | As **8 chamadas `POST /sinais` aparecem com status `202`**, cada uma com o seu `correlation_id` clicável e o comando `./scripts/trace.sh <cid>` pronto para colar |
+| Cadeia causal visível na tela | O `correlation_id` da primeira leitura da sequência, mostrado no log do console, é **o mesmo** exibido no rodapé do painel junto ao evento `alerta.notificado` — o identificador que nasceu no `POST /sinais` do navegador reaparece depois de atravessar `vitals-service`, `triage-service` e `alert-service` |
+| Erro como demonstração | O preset *Fora de faixa* devolve `202` na borda e, com `aud.paula` selecionado, `POST /internacoes/{id}/alta` devolve `403` com o corpo `application/problem+json` (`type: .../papel-insuficiente`, `title: "Permissao insuficiente"`, `detail: "papel 'auditor' nao autorizado para esta operacao"`) renderizado no log |
+
+Os escores da sequência foram conferidos contra a implementação de referência
+(`services/comum/news2.py`): leituras 1–3 pontuam 0; a 4ª e a 5ª pontuam 3 e 4 (severidade média); e
+as leituras 6, 7 e 8 pontuam 9, 13 e 19 — as três que produzem `alerta.gerado`.
+
+Esta é a mesma cadeia da subseção 10.4 e 10.5, com uma diferença que importa para a arguição: ela foi
+disparada **da própria página**, sem terminal, e a correlação ponta a ponta ficou visível sem sair da
+tela projetada.
+
 ---
 
 ## 11. Limitações conhecidas e trabalhos futuros
@@ -2764,13 +2897,14 @@ antes de perguntar.
 | **L9** | Sem TLS entre processos | Tráfego AMQP e HTTP em claro dentro da rede do Compose | TLS no broker e mTLS entre serviços; na AWS, KMS e VPC endpoints |
 | **L10** | Métricas em memória, sem série temporal | Contadores zeram a cada reinício e não há histórico | Exportador Prometheus mais painel Grafana; CloudWatch via EMF na AWS |
 | **L11** | Correlação sem *tracing* distribuído | É possível reconstruir o caminho pelos logs, mas não visualizar *spans* com duração encadeada | Instrumentação OpenTelemetry propagando `traceparent` no Envelope |
-| **L12** | Sem teste de carga | Os alvos de latência de 3.8 são de projeto, não medidos sob concorrência alta | Ensaio com `locust` variando taxa de leituras e número de réplicas |
+| **L12** | Sem teste de carga | Os alvos de latência de 3.9 são de projeto, não medidos sob concorrência alta | Ensaio com `locust` variando taxa de leituras e número de réplicas |
 | **L13** | `SqsTransport` projetado e não implementado | A portabilidade é argumentada e codificada na interface, mas não comprovada em execução. **O arquivo `hospitalmq/transport/sqs.py` não existe no repositório** | Implementação e implantação conforme a seção 8 — vedadas pelo escopo desta atividade |
 | **L14** | Sem registro central de schema de eventos | Uma mudança incompatível de `payload` só é descoberta em tempo de execução | *Schema registry* com validação na publicação e verificação de compatibilidade em CI |
 | **L15** | Dados fictícios, sem anonimização real | Suficiente para a demonstração, insuficiente para uso clínico | Pseudonimização e cifragem em repouso conforme LGPD |
 | **L16** | A retentativa multiplica a topologia | Três filas de espera por fila de negócio com retentativa — 12 filas adicionais — mais ruído na UI de management | Um *delayed exchange* nativo do broker, ou `DelaySeconds` do SQS, que dispensa filas auxiliares |
 | **L17** | Janela de duplicação entre a republicação e o ACK da original | Se o processo cair depois do *publisher confirm* da cópia e antes do ACK, há duas entregas em voo para o mesmo `message_id`. O efeito duplicado é barrado pela idempotência, ao custo de uma execução extra do handler | Publicação transacional no consumidor, ou confirmação em duas fases com registro do estado da retentativa |
 | **L18** | Sem utilitário de *redrive* automatizado | O reprocessamento de mensagens da DLQ é feito manualmente pela UI de management. O `scripts/redrive.py` descrito no design não foi implementado | Implementar o utilitário, preservando o `message_id` e reiniciando `attempt` |
+| **L19** | O Console de Operação é ferramenta de demonstração, não de produção | Ele cobre exatamente os seis endpoints do roteiro e nada além: **não substitui o Swagger** (`/docs`) para explorar a API, porque não expõe todos os parâmetros nem o esquema dos modelos; **não tem paginação** nem filtro (o log guarda as últimas 20 chamadas e o mural lista todos os leitos); não edita dado clínico nem é um prontuário; e traz credenciais fictícias pré-preenchidas, aceitáveis apenas porque o ambiente é local e os dados são fictícios (C6). Nada disso limita o middleware — limita a interface | Não está previsto: a evolução natural seria um cliente de operação separado, autenticado sem credencial pré-preenchida, com paginação e filtro sobre `GET /leitos` e `GET /alertas` |
 
 **Explicitamente fora do escopo desta entrega:** alta disponibilidade de broker e banco; implantação
 em nuvem; autenticação mútua entre serviços internos; interface de operação da DLQ com
