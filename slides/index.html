@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HospitalMQ · G3 · Middleware de Mensageria</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏥</text></svg>">
+<style>
+  /* Deck autocontido: sem framework, sem CDN, sem build — o mesmo princípio do painel (R11.6).
+     Navegação: ← → espaço PageUp/PageDown Home End · "P" mostra as notas · Ctrl+P imprime em PDF. */
+  :root{
+    --bg:#0b1120; --sup:#121a2b; --sup2:#0f1626; --txt:#e8eef7; --suave:#9fb0c7; --fraco:#6b7c96;
+    --borda:#263349; --ok:#22c55e; --avisar:#f59e0b; --alta:#f87171; --marca:#38bdf8;
+    --fonte:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--fonte);overflow:hidden}
+  .slide{
+    display:none;position:absolute;inset:0;padding:4.5vh 6vw 9vh;
+    flex-direction:column;justify-content:center;
+  }
+  .slide.on{display:flex}
+  h1{font-size:clamp(2rem,5.2vw,4rem);line-height:1.05;margin:0 0 .4em}
+  h2{font-size:clamp(1.5rem,3.2vw,2.4rem);line-height:1.15;margin:0 0 .7em;color:var(--marca)}
+  h3{font-size:clamp(1rem,1.7vw,1.35rem);margin:1.2em 0 .4em;color:var(--suave);font-weight:600}
+  p,li{font-size:clamp(.95rem,1.55vw,1.3rem);line-height:1.5;margin:0 0 .55em;color:var(--suave)}
+  strong{color:var(--txt)}
+  .lead{font-size:clamp(1.1rem,2vw,1.6rem);color:var(--txt)}
+  ul{margin:0 0 .6em;padding-left:1.2em}
+  li{margin-bottom:.45em}
+  code,.mono{font-family:var(--mono);font-size:.92em;color:var(--marca)}
+  table{border-collapse:collapse;width:100%;margin:.5em 0}
+  th,td{border:1px solid var(--borda);padding:.5em .7em;text-align:left;
+        font-size:clamp(.75rem,1.15vw,1rem);color:var(--suave)}
+  th{background:var(--sup2);color:var(--txt);font-weight:600}
+  td strong{color:var(--txt)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:2vw;align-items:start}
+  .cols-3{display:grid;grid-template-columns:repeat(3,1fr);gap:1.4vw}
+  .caixa{background:var(--sup);border:1px solid var(--borda);border-radius:12px;padding:1em 1.2em}
+  .caixa--ok{border-left:5px solid var(--ok)}
+  .caixa--avisar{border-left:5px solid var(--avisar)}
+  .caixa--alta{border-left:5px solid var(--alta)}
+  .num{font-size:clamp(1.8rem,4vw,3rem);font-weight:700;color:var(--marca);line-height:1}
+  .num--ok{color:var(--ok)} .num--alta{color:var(--alta)}
+  .rot{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--fraco)}
+  pre{background:var(--sup2);border:1px solid var(--borda);border-radius:10px;
+      padding:.9em 1.1em;overflow:auto;margin:.5em 0}
+  pre code{color:var(--txt);font-size:clamp(.7rem,1.05vw,.95rem);line-height:1.5}
+  .fluxo{font-family:var(--mono);font-size:clamp(.65rem,1.02vw,.9rem);
+         color:var(--suave);line-height:1.55;white-space:pre;overflow:auto}
+  .destaque{color:var(--ok);font-weight:600}
+  .perigo{color:var(--alta);font-weight:600}
+  .cita{border-left:4px solid var(--marca);padding-left:1em;color:var(--txt);font-style:italic}
+  .rodape{position:absolute;left:6vw;right:6vw;bottom:3vh;display:flex;
+          justify-content:space-between;align-items:center;font-size:.8rem;color:var(--fraco)}
+  .tag{background:var(--sup);border:1px solid var(--borda);border-radius:999px;
+       padding:.2em .8em;font-size:.75rem;color:var(--suave)}
+  .capa{text-align:center;align-items:center}
+  .capa h1{color:var(--txt)}
+  .capa .marca{color:var(--marca)}
+  .preencher{background:rgba(245,158,11,.14);border:1px dashed var(--avisar);
+             border-radius:8px;padding:.5em 1em;color:var(--avisar);display:inline-block}
+  .notas{display:none;position:absolute;left:6vw;right:6vw;bottom:7vh;background:var(--sup2);
+         border:1px solid var(--borda);border-left:4px solid var(--marca);border-radius:8px;
+         padding:.7em 1em;font-size:.85rem;color:var(--suave)}
+  body.mostrar-notas .slide.on .notas{display:block}
+  .barra{position:absolute;left:0;bottom:0;height:4px;background:var(--marca);transition:width .2s}
+  @media print{
+    body{overflow:visible}
+    .slide{display:flex!important;position:relative;height:100vh;page-break-after:always;
+           border-bottom:1px solid var(--borda)}
+    .barra{display:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- 1 ------------------------------------------------------------------ -->
+<section class="slide on capa">
+  <p class="rot">Sistemas Distribuídos · Atividade Prática 01</p>
+  <h1><span class="marca">HospitalMQ</span><br>Middleware de Mensageria</h1>
+  <p class="lead">Comunicação assíncrona com filas · Cenário <strong>Hospital Inteligente</strong></p>
+  <p style="margin-top:1.5em"><span class="tag">Grupo G3</span> <span class="tag">Message Queue · RabbitMQ</span> <span class="tag">AWS: Amazon SQS</span></p>
+  <p style="margin-top:1.2em" class="preencher">PREENCHER: nomes dos integrantes do G3</p>
+  <div class="notas">15 min no total. Fale o nome do grupo e vá direto ao problema — não gaste tempo em agradecimentos.</div>
+</section>
+
+<!-- 2 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>O problema não é clínico. É de acoplamento.</h2>
+  <div class="cols">
+    <div>
+      <p>Um hospital instrumentado tem participantes em <strong>ritmos incompatíveis</strong>:</p>
+      <ul>
+        <li>o monitor de leito emite a cada poucos segundos e não pode esperar</li>
+        <li>a triagem precisa avaliar cada leitura</li>
+        <li>a equipe precisa ser avisada em segundos</li>
+        <li>a auditoria LGPD registra tudo, fora do caminho crítico</li>
+      </ul>
+    </div>
+    <div class="caixa caixa--alta">
+      <p class="rot">Se cada serviço chamar o próximo diretamente</p>
+      <ul>
+        <li>a queda de <strong>um</strong> serviço interrompe a coleta</li>
+        <li>incluir um consumidor exige <strong>alterar o produtor</strong></li>
+        <li>um pico de leituras derruba o elo mais lento</li>
+      </ul>
+    </div>
+  </div>
+  <p class="cita" style="margin-top:1em">A pergunta do trabalho: que peça se coloca no meio para desacoplar isso?</p>
+  <div class="notas">40 s. O objetivo aqui é justificar por que existe middleware — não descrever o hospital.</div>
+</section>
+
+<!-- 3 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>Middleware orientado a mensagens: três desacoplamentos</h2>
+  <table>
+    <tr><th>Dimensão</th><th>Significa</th><th>No HospitalMQ</th></tr>
+    <tr><td><strong>Espaço</strong></td><td>produtor não conhece o consumidor</td><td>publica um <em>tipo de evento</em>, nunca um endereço</td></tr>
+    <tr><td><strong>Tempo</strong></td><td>não precisam estar vivos juntos</td><td>fila durável guarda até o consumidor voltar</td></tr>
+    <tr><td><strong>Sincronização</strong></td><td>produtor não bloqueia</td><td><code>202 Accepted</code> imediato; o trabalho segue depois</td></tr>
+  </table>
+  <p style="margin-top:.8em">A fila transforma <strong>falha de disponibilidade em latência</strong> — o efeito que
+     nenhuma chamada direta consegue produzir.</p>
+  <p class="rot" style="margin-top:.6em">Eugster et al., 2003 · Hohpe &amp; Woolf, 2003</p>
+  <div class="notas">40 s. Se a banca só levar uma ideia de teoria, é esta tabela.</div>
+</section>
+
+<!-- 4 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2><em>Exactly-once</em> não existe no transporte</h2>
+  <div class="cols">
+    <div>
+      <p>Entregar e confirmar são <strong>dois eventos separados</strong>. Perder qualquer um deles é
+         indistinguível do outro caso — é o <strong>problema dos dois generais</strong>.</p>
+      <p>Então o projeto <strong>não promete</strong> o impossível:</p>
+      <div class="caixa caixa--ok">
+        <p style="margin:0"><strong>at-least-once</strong> no transporte<br>
+           <span style="color:var(--marca)">+</span> <strong>idempotência</strong> no consumidor<br>
+           <span style="color:var(--marca)">=</span> efeito prático de processamento único</p>
+      </div>
+    </div>
+    <div>
+      <h3>Como a idempotência é garantida</h3>
+      <pre><code>INSERT INTO mensagens_processadas
+   (consumidor, message_id) VALUES (…)
+ON CONFLICT DO NOTHING;</code></pre>
+      <p>Na <strong>mesma transação</strong> do efeito colateral. Se a mensagem voltar, o handler
+         não roda de novo — e o efeito e a marca nunca divergem.</p>
+      <p class="rot">R2.4 · <em>effectively-once</em></p>
+    </div>
+  </div>
+  <div class="notas">40 s. Este slide é o que separa "usei uma fila" de "entendi mensageria". Não corra.</div>
+</section>
+
+<!-- 5 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>Arquitetura: Cliente → Middleware → Servidor → Banco</h2>
+  <div class="fluxo">  bedside_monitor  ──HTTP + API Key──►  api-gateway
+                                          │ publish("sinais.coletados")
+                                          ▼
+   ┌──────────────  hospitalmq  ·  RabbitMQ  ──────────────┐
+   │  envelope · retry · DLQ · idempotência · RPC · log    │
+   └───┬──────────────┬──────────────┬──────────────┬──────┘
+       ▼              ▼              ▼              ▼
+  vitals-service  triage-service  alert-service  audit-service
+       │              │              │              │
+       └──────────────┴───► PostgreSQL ◄────────────┘
+
+  api-gateway ──RPC sobre fila──► admission-service   (prontuário)</div>
+  <p style="margin-top:.8em">Cada serviço conhece <strong>tipos de evento</strong>, nunca endereços.
+     Um sexto consumidor entra sem tocar em quem publica.</p>
+  <div class="notas">60 s. Aponte a cadeia literal exigida pelo enunciado (C3) e a ausência de setas entre serviços.</div>
+</section>
+
+<!-- 6 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>Topologia AMQP</h2>
+  <div class="cols">
+    <div>
+      <table>
+        <tr><th>Exchange</th><th>Tipo</th><th>Papel</th></tr>
+        <tr><td><code>hospital.events</code></td><td>topic</td><td>eventos de domínio</td></tr>
+        <tr><td><code>hospital.rpc</code></td><td>direct</td><td>request/reply</td></tr>
+        <tr><td><code>hospital.dlx</code></td><td>topic</td><td>descarte</td></tr>
+      </table>
+      <p>7 filas de negócio · <code>.dlq</code> para cada · filas de espera
+         <code>.retry.1s/2s/4s</code> · fila de retorno RPC nomeada pelo cliente</p>
+    </div>
+    <div class="caixa caixa--ok">
+      <h3 style="margin-top:0">O binding que vale a pena mostrar</h3>
+      <p><code>q.audit.todos</code> assina <code>#</code> — captura <strong>todo</strong> evento,
+         inclusive tipos que ainda não existem.</p>
+      <p>A trilha LGPD passa a cobrir eventos futuros <strong>sem alteração de código</strong>.</p>
+      <p class="rot">R7.1</p>
+    </div>
+  </div>
+  <div class="notas">60 s. O binding "#" costuma render pergunta. Tenha a resposta do algoritmo de topic pronta.</div>
+</section>
+
+<!-- 7 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>O middleware é nosso. O RabbitMQ é transporte.</h2>
+  <table>
+    <tr><th>Preocupação</th><th>Quem implementa</th><th>O que o <code>aio-pika</code> faz</th></tr>
+    <tr><td>Envelope, serialização, correlação e causalidade</td><td><strong>Grupo</strong></td><td>nada — transporta <em>bytes</em> opacos</td></tr>
+    <tr><td>Retentativa 1s/2s/4s, corte e DLQ enriquecida</td><td><strong>Grupo</strong></td><td>oferece TTL e <em>dead-letter</em> crus</td></tr>
+    <tr><td>Idempotência por <code>(consumidor, message_id)</code></td><td><strong>Grupo</strong></td><td>nenhuma — nem RabbitMQ nem SQS deduplicam</td></tr>
+    <tr><td>RPC sobre fila: fila de retorno, casamento, timeout</td><td><strong>Grupo</strong></td><td>fornece <code>reply_to</code> e <code>correlation_id</code></td></tr>
+    <tr><td>Interface <code>Transport</code> e portabilidade</td><td><strong>Grupo</strong></td><td>nada — é a abstração <em>sobre</em> ele</td></tr>
+    <tr><td>Enquadramento AMQP, canais, <em>heartbeats</em></td><td>Terceiros</td><td><code>aio-pika</code> / <code>aiormq</code></td></tr>
+  </table>
+  <p style="margin-top:.7em"><strong>3 implementações</strong> da mesma interface:
+     <span class="destaque">AMQP</span> (produção), <span class="destaque">memória</span> (117 testes sem broker),
+     <span class="destaque">SQS</span> (projetada). Trocar de broker é variável de ambiente.</p>
+  <div class="notas">60 s. É o slide que responde "vocês só usaram o RabbitMQ?". Vale 30% da nota — não passe rápido.</div>
+</section>
+
+<!-- 8 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>O Envelope: o que o produtor não precisa preencher</h2>
+  <div class="cols">
+    <div>
+      <pre><code>await publisher.publish(
+    "sinais.coletados",
+    {"leito_id": "UTI-02", ...},
+)</code></pre>
+      <p>O serviço escreve <strong>duas linhas</strong>. O middleware acrescenta o resto.</p>
+    </div>
+    <div>
+      <table>
+        <tr><th>Campo</th><th>Para quê</th></tr>
+        <tr><td><code>message_id</code></td><td>idempotência</td></tr>
+        <tr><td><code>correlation_id</code></td><td>rastro fim a fim</td></tr>
+        <tr><td><code>causation_id</code></td><td>quem causou este evento</td></tr>
+        <tr><td><code>identity</code></td><td>quem originou a ação (R4.3)</td></tr>
+        <tr><td><code>attempt</code></td><td>tentativa atual (R2.2)</td></tr>
+        <tr><td><code>version</code></td><td>evolução de schema</td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="notas">60 s. Mostre que a identidade do JWT viaja no envelope e chega ao consumidor sem nova consulta (R4.6).</div>
+</section>
+
+<!-- 9 ------------------------------------------------------------------ -->
+<section class="slide">
+  <h2>O pipeline do Consumer</h2>
+  <div class="fluxo">   mensagem
+      │
+      ▼
+   log ──► idempotência ──► identidade ──► handler ──► derivados ──► ACK
+                │                              │
+        já processada?                  TransientError ──► retry 1s · 2s · 4s ──► DLQ
+                │                              │
+             ACK, sem                   PermanentError ──────────────────────► DLQ (1ª)
+             rodar de novo</div>
+  <div class="cols" style="margin-top:1em">
+    <div class="caixa caixa--avisar">
+      <p style="margin:0"><strong>Transitório</strong> — "pode dar certo depois".<br>
+      Canal caiu, banco engasgou → <strong>retenta</strong>.</p>
+    </div>
+    <div class="caixa caixa--alta">
+      <p style="margin:0"><strong>Permanente</strong> — "vai falhar sempre".<br>
+      SpO₂ 20% → <strong>DLQ direto</strong>, sem gastar 7 s.</p>
+    </div>
+  </div>
+  <p style="margin-top:.7em">O ACK é <strong>manual</strong> e só depois do sucesso. Processo morre no meio → mensagem volta.</p>
+  <div class="notas">60 s. A distinção transitório × permanente é o que mostra política pensada, não try/except.</div>
+</section>
+
+<!-- 10 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>Síncrono quando precisa: RPC sobre fila</h2>
+  <div class="cols">
+    <div>
+      <p>O enfermeiro consulta o prontuário e precisa da resposta <strong>na mesma requisição HTTP</strong>.</p>
+      <p>Mas o <code>api-gateway</code> <strong>não tem sessão do banco clínico</strong> — ele recebe
+         apenas <code>Publisher</code>, <code>RpcClient</code> e a projeção. A violação é impossível
+         por construção.</p>
+      <p class="rot">R7.2 · R3.1</p>
+    </div>
+    <div class="caixa">
+      <p class="rot">Como funciona</p>
+      <ul>
+        <li>publica em <code>q.rpc.admission</code></li>
+        <li>espera em fila de retorno <strong>exclusiva</strong>, nomeada pelo cliente</li>
+        <li>casa a resposta por <code>correlation_id</code></li>
+        <li><code>asyncio.wait_for</code> · timeout 5 s → <strong>504</strong></li>
+        <li>a <em>future</em> pendente é limpa no <code>finally</code></li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top:.7em">Nome de fila gerado pelo <strong>cliente</strong>, e não pelo broker: nomes automáticos são
+     recurso do AMQP que <strong>não existe no SQS</strong>. É o que faz o mesmo <code>rpc.py</code> valer nos dois.</p>
+  <div class="notas">60 s. Se sobrar tempo, este é o detalhe que mais impressiona: a decisão já pensando na portabilidade.</div>
+</section>
+
+<!-- 11 ----------------------------------------------------------------- -->
+<section class="slide capa">
+  <p class="rot">5 minutos</p>
+  <h1 style="color:var(--ok)">Demonstração</h1>
+  <p class="lead">Sistema já no ar · painel + console de operação</p>
+  <p style="margin-top:1em"><span class="tag">401 sem token</span> <span class="tag">admitir</span>
+     <span class="tag">modo enfermaria</span> <span class="tag">NEWS2 sobe</span>
+     <span class="tag">retentativa → DLQ</span> <span class="tag">1 correlation_id em 6 serviços</span></p>
+  <div class="notas">Ordem: /docs → 401 → admitir 3 → Modo enfermaria → falar enquanto o card vira vermelho → DLQ → trace.sh. Compose JÁ no ar.</div>
+</section>
+
+<!-- 12 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>O que a demonstração prova</h2>
+  <table>
+    <tr><th>Cena</th><th>O que evidencia</th></tr>
+    <tr><td><code>/docs</code> aberto, <code>401</code> em <code>problem+json</code></td><td>OpenAPI + RFC 7807 + JWT <span class="rot">R8.1 R8.2 R4.1</span></td></tr>
+    <tr><td>Auditor tentando admitir → <code>403</code> na tela</td><td>autorização por papel <span class="rot">R4.4</span></td></tr>
+    <tr><td><strong>Modo enfermaria</strong>: todos os leitos vivos, um evoluindo</td><td>fluxo clínico + painel SSE <span class="rot">R6.2 R6.3 R11.2</span></td></tr>
+    <tr><td>Canal sabotado: <code>1s · 2s · 4s</code> → DLQ na 4ª</td><td>retentativa e tolerância a falhas <span class="rot">R2.2 R2.3 R6.5</span></td></tr>
+    <tr><td>SpO₂ 20 → DLQ na <strong>1ª</strong>, sem retentativa</td><td>erro permanente <span class="rot">R6.6</span></td></tr>
+    <tr><td><code>trace.sh &lt;cid&gt;</code> em 6 serviços</td><td>correlação fim a fim <span class="rot">R5.3</span></td></tr>
+  </table>
+  <p style="margin-top:.7em">Envelope na DLQ chega <strong>intacto</strong>, enriquecido com motivo,
+     tipo do erro e <code>attempt: 4</code>.</p>
+  <div class="notas">Use como rede de segurança: se a demo falhar, este slide conta o que ela mostraria.</div>
+</section>
+
+<!-- 13 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>AWS: trocar de driver, não reescrever</h2>
+  <table>
+    <tr><th>HospitalMQ / RabbitMQ</th><th>AWS</th></tr>
+    <tr><td>exchange <em>topic</em> + bindings</td><td><strong>SNS</strong> com <em>filter policy</em> por atributo</td></tr>
+    <tr><td>fila durável</td><td><strong>SQS</strong> Standard</td></tr>
+    <tr><td>ACK manual</td><td><code>DeleteMessage</code> após sucesso</td></tr>
+    <tr><td>prefetch</td><td><code>MaxNumberOfMessages</code> + <em>long polling</em> 20 s</td></tr>
+    <tr><td>DLQ por <em>dead-letter-exchange</em></td><td><em>redrive policy</em> com <code>maxReceiveCount</code></td></tr>
+    <tr><td>atraso da retentativa</td><td><code>DelaySeconds</code> (nativo, até 900 s)</td></tr>
+    <tr><td>fila de retorno RPC</td><td>fila SQS temporária por instância</td></tr>
+  </table>
+  <p style="margin-top:.7em">Muda <code>transport/sqs.py</code>. Os seis serviços e o cliente mudam
+     <strong>zero linhas</strong> — é a variável <code>HOSPITALMQ_TRANSPORT</code>.</p>
+  <div class="notas">40 s. Não leia a tabela inteira; escolha três linhas e feche com "zero linhas nos serviços".</div>
+</section>
+
+<!-- 14 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>As diferenças que realmente afetam o projeto</h2>
+  <div class="cols">
+    <div>
+      <ul>
+        <li><strong>Não há <em>push</em>:</strong> o consumidor pergunta. <em>Long polling</em> de 20 s
+            no lugar do socket acordando o <em>event loop</em>.</li>
+        <li><strong><code>VisibilityTimeout</code> no lugar do ACK:</strong> processar mais devagar que o
+            timeout gera reentrega.</li>
+        <li><strong>Sem exchange:</strong> o roteamento sobe para o SNS.</li>
+        <li><strong>256 KB por mensagem:</strong> payload maior exige <em>claim-check</em> via S3.</li>
+      </ul>
+    </div>
+    <div class="caixa caixa--ok">
+      <h3 style="margin-top:0">E o ponto que fecha a argumentação</h3>
+      <p>SQS Standard entrega <strong>ao menos uma vez</strong> e <strong>pode duplicar</strong>.</p>
+      <p class="lead" style="color:var(--ok)">A idempotência do slide 4 continua obrigatória — na
+         AWS ela deixa de ser zelo e vira requisito do provedor.</p>
+      <p class="rot">R9.5</p>
+    </div>
+  </div>
+  <div class="notas">20 s. Termine com a frase da caixa verde: amarra a teoria do início com a nuvem do fim.</div>
+</section>
+
+<!-- 15 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>Qualidade, e o que assumimos não ter feito</h2>
+  <div class="cols-3">
+    <div class="caixa caixa--ok"><p class="num num--ok">125</p><p class="rot">testes verdes<br>117 unidade + 8 e2e</p></div>
+    <div class="caixa"><p class="num">17</p><p class="rot">módulos no <code>hospitalmq</code></p></div>
+    <div class="caixa"><p class="num">4</p><p class="rot">jobs de CI no GitHub<br>lint · tipos · testes · build</p></div>
+  </div>
+  <h3>Limitações que assumimos</h3>
+  <ul>
+    <li>a projeção do painel é <strong>em memória</strong>: o gateway reiniciado perde os últimos sinais até novos eventos</li>
+    <li><code>transport/sqs.py</code> é <strong>projetado</strong>, não implantado — o enunciado não pedia implantar</li>
+    <li>o consumidor <strong>confia</strong> na identidade do envelope; a fronteira de confiança é o broker</li>
+    <li>reprocessar a DLQ é manual, pela interface do RabbitMQ</li>
+  </ul>
+  <div class="notas">30 s. Dizer as limitações antes de perguntarem transmite domínio, não fraqueza.</div>
+</section>
+
+<!-- 16 ----------------------------------------------------------------- -->
+<section class="slide">
+  <h2>Perguntas que esperamos</h2>
+  <table>
+    <tr><th>Pergunta</th><th>Resposta curta</th></tr>
+    <tr><td>Vocês só usaram o RabbitMQ?</td><td>Não: ele é transporte atrás de uma interface de 8 métodos. Envelope, retry, DLQ, idempotência e RPC são nossos — slide 7</td></tr>
+    <tr><td>E se a mensagem for processada duas vezes?</td><td>Não é: <code>(consumidor, message_id)</code> na mesma transação do efeito</td></tr>
+    <tr><td>Por que não Kafka?</td><td>Precisamos de roteamento por tópico + DLQ + fila como buffer, não de log com retenção e replay</td></tr>
+    <tr><td>Por que SNS <em>e</em> SQS?</td><td>SQS sozinho é ponto a ponto; o fan-out por tipo de evento precisa do SNS</td></tr>
+    <tr><td>SQS FIFO resolve <em>exactly-once</em>?</td><td>Deduplica numa janela de 5 min, não fim a fim. A idempotência continua necessária</td></tr>
+    <tr><td>E se um sensor parar de transmitir?</td><td>O leito fica <strong>SEM LEITURA</strong> no painel — visualmente distinto de paciente estável</td></tr>
+  </table>
+  <div class="notas">Não avance para cá; pule direto se a banca perguntar. Serve de cola.</div>
+</section>
+
+<!-- 17 ----------------------------------------------------------------- -->
+<section class="slide capa">
+  <h1>Obrigado</h1>
+  <p class="lead">Perguntas?</p>
+  <p style="margin-top:1.5em" class="mono">github.com/ggnery/Atividade-1-SD</p>
+  <p style="margin-top:.6em"><span class="tag">README</span> <span class="tag">docs/arquitetura.md</span>
+     <span class="tag">specs/ — requisitos, design e tarefas</span></p>
+  <p style="margin-top:1.2em" class="preencher">PREENCHER: nomes dos integrantes do G3</p>
+</section>
+
+<div class="barra" id="barra"></div>
+
+<script>
+(function () {
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var i = 0;
+  var barra = document.getElementById("barra");
+
+  function mostrar(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach(function (s, k) { s.classList.toggle("on", k === i); });
+    barra.style.width = ((i + 1) / slides.length * 100) + "%";
+    if (location.hash !== "#" + (i + 1)) history.replaceState(null, "", "#" + (i + 1));
+    var r = slides[i].querySelector(".rodape");
+    if (!r) {
+      r = document.createElement("div");
+      r.className = "rodape";
+      slides[i].appendChild(r);
+    }
+    r.innerHTML = "";
+    var esq = document.createElement("span");
+    esq.textContent = "HospitalMQ · G3 · Sistemas Distribuídos";
+    var dir = document.createElement("span");
+    dir.textContent = (i + 1) + " / " + slides.length;
+    r.appendChild(esq); r.appendChild(dir);
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") { mostrar(i + 1); e.preventDefault(); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { mostrar(i - 1); e.preventDefault(); }
+    else if (e.key === "Home") { mostrar(0); }
+    else if (e.key === "End") { mostrar(slides.length - 1); }
+    else if (e.key === "p" || e.key === "P") { document.body.classList.toggle("mostrar-notas"); }
+  });
+
+  // Toque: avança na metade direita, volta na esquerda.
+  document.addEventListener("click", function (e) {
+    if (e.target.closest("a")) return;
+    mostrar(e.clientX > window.innerWidth / 2 ? i + 1 : i - 1);
+  });
+
+  function daHash() {
+    var n = parseInt((location.hash || "#1").slice(1), 10);
+    return isNaN(n) ? 0 : n - 1;
+  }
+
+  // Sem isto, abrir "#7" numa aba ja carregada so troca a URL e nao navega -- e o hash e justamente
+  // como se pula direto a um slide durante o ensaio.
+  window.addEventListener("hashchange", function () {
+    var n = daHash();
+    if (n !== i) mostrar(n);
+  });
+
+  mostrar(daHash());
+})();
+</script>
+</body>
+</html>

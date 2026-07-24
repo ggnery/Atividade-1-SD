@@ -1305,6 +1305,56 @@ docker compose restart api-gateway         # NÃO publica: reinicia o processo c
 Um `restart` reinicia o contêiner com a camada de imagem antiga e serve a versão anterior da página —
 sintoma que se confunde facilmente com cache do navegador. O caminho correto é `up -d --build`.
 
+#### 3.8.3 Modo enfermaria: a frota de monitores, e por que ela vive no cliente
+
+Monitorar um leito por vez, à mão, não corresponde a um hospital: lá o monitor está **preso ao
+leito** e transmite desde que o paciente chega. O **Modo enfermaria** do console liga um monitor em
+cada leito ocupado e fica armado — quem for internado depois entra sozinho.
+
+O gatilho é o próprio evento de leito que o console já recebe pelo SSE da projeção: a internação
+publica, o *stream* entrega, o monitor sobe. Não há *polling* nem endpoint novo — é a mesma projeção
+de 3.8 sendo usada como sinal de controle.
+
+**Onde essa automação mora é decisão de arquitetura, não de conveniência.** Seria tecnicamente mais
+simples pôr um gerador de sinais dentro de um serviço, e estaria errado: o hospital passaria a
+inventar dado clínico, e a cadeia obrigatória Cliente → Middleware → Servidor → Banco (C3) deixaria
+de valer justamente no elo que ela existe para provar. O monitor é um **dispositivo**; ele vive do
+lado do cliente e entra pela borda, autenticado por API Key (R4.5), como qualquer outro. Se a banca
+perguntar de onde vêm os dados, a resposta continua sendo "de fora, pela borda".
+
+Duas decisões de comportamento que o uso real impôs:
+
+| Decisão | Por quê |
+|---|---|
+| **Um** paciente evolui; os demais ficam estáveis, com a gravidade passeando sob um teto de 12% | Todo mundo piorando ao mesmo tempo não acontece numa enfermaria e apaga o efeito visual. O que comunica é um card ficando vermelho no meio de uma parede verde |
+| **Desarmar** o modo não para os monitores em curso | "Modo enfermaria" é a política *"todo leito ocupado tem monitor"*, não um interruptor geral. Desarmar derrubando tudo fazia um clique a mais zerar a escalada em andamento; para interromper existe **Parar todos** |
+
+A automação e a *Sequência de deterioração* são mutuamente exclusivas **por leito**: a sequência
+assume o leito escolhido parando o contínuo dele, e o modo enfermaria não retoma esse leito enquanto
+a sequência o conduz. Sem essa exclusão as duas se derrubavam em laço — a sequência parava o
+monitor, publicava, o evento voltava, o modo re-atachava e o monitor recém-criado matava a sequência.
+
+#### 3.8.4 Ausência de dado não é diagnóstico
+
+O domínio conhece três severidades — `BAIXA`, `MEDIA`, `ALTA` (7.5.2). A projeção usa `"normal"`
+como valor inicial, e esse valor significa **"ainda não há leitura"**, não "paciente avaliado e sem
+risco".
+
+Desenhar a palavra *NORMAL* num leito que ninguém mediu faz um monitor mudo ficar indistinguível de
+um paciente estável — num painel clínico, a confusão mais perigosa possível. O card portanto separa
+os três estados, usando `score_news2 === null` como discriminador (só existe escore depois que o
+`triage-service` avaliou uma leitura):
+
+| Estado do leito | Rótulo | Tratamento visual |
+|---|---|---|
+| Vago | `LIVRE` | Neutro |
+| Ocupado, nenhuma leitura ainda | `SEM LEITURA` | Âmbar, borda tracejada — pede ação |
+| Ocupado, avaliado | `BAIXA` / `MEDIA` / `ALTA` | Cor da banda de risco |
+
+É apresentação apenas: nada muda na regra clínica, no `hospitalmq`, na projeção ou no contrato de
+`GET /leitos`, e o navegador continua sem regra clínica (3.8.1). O ganho é de defesa: à pergunta
+"e se o sensor de um leito parar de transmitir?", a resposta está na tela.
+
 ### 3.9 Atributos de qualidade e como são atendidos
 
 | Atributo | Táticas e mecanismos concretos | Limite conhecido |

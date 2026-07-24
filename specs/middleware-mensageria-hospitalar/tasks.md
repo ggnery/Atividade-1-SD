@@ -163,7 +163,7 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - `.github/workflows/ci.yml` com lint, testes e build da imagem
   - _Requirements: R10.2, R10.5_
 
-- [ ]* 12. Slides da apresentação
+- [x]* 12. Slides da apresentação
   - Estrutura de 15 minutos seguindo o roteiro de §12.6
   - Depende dos nomes dos integrantes do G3
   - _Requirements: R10.5_
@@ -174,5 +174,5 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
 
 | # | Pendência | Bloqueia |
 |---|-----------|----------|
-| 1 | Nomes dos integrantes do G3 | Tarefas 11 e 12 |
+| 1 | Nomes dos integrantes do G3 | Marcador `PREENCHER` no README e em 2 slides |
 | 2 | — | _Resolvido: remote `git@github.com:ggnery/Atividade-1-SD.git` já existe_ |

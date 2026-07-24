@@ -299,6 +299,12 @@ lado ficam os chips de **troca rápida de papel** — `enf.ana · enfermeiro`, `
 `aud.paula · auditor` — e o campo **API Key do dispositivo (cabeçalho X-API-Key)**, pré-preenchido com
 `dev-monitor-l07`, porque telemetria se autentica por API Key e **nunca** por JWT (**R4.5**).
 
+> **Internar não mede.** `POST /internacoes` registra que o paciente ocupa o leito e nada mais —
+> sinais vitais só existem depois que algum monitor publica em `POST /sinais`. Por isso o card de um
+> paciente recém-admitido aparece com o badge **SEM LEITURA** (âmbar, borda tracejada) e um traço no
+> lugar do NEWS2. Esse estado é deliberadamente distinto de **BAIXA**: um leito que ninguém mediu não
+> pode se parecer com um paciente avaliado e sem risco, e um leito vago mostra **LIVRE**.
+
 **3. `2 Admitir paciente` — criar o paciente e interná-lo.** O **Nome do paciente** já vem sorteado e
 o **Documento** auto-gerado (`DOC-<epoch>`, para o bloco ser re-executável); **Sortear paciente**
 troca os dois. Escolha um leito no `select` **Leito livre**, que é populado com os leitos livres lidos
@@ -317,6 +323,25 @@ recarregar a página (**R11.2**), porque o `triage-service` recalcula o NEWS2 a 
 fica vermelho e um alerta de severidade **alta** entra no topo da coluna **Alertas recentes**
 (**R6.3**). Os presets fazem o mesmo em uma leitura só: **Estável** (NEWS2 0), **Atenção** (NEWS2 3)
 e **Crítico** (NEWS2 ≥ 7, dispara alerta) — o quarto, **Fora de faixa**, é o passo 5.
+
+**4b. `Monitoramento contínuo` e `Modo enfermaria` — a enfermaria viva.** A *Sequência de
+deterioração* do passo 4 tem começo e fim; num hospital o monitor fica **preso ao leito** e
+transmite o tempo todo. Dois botões cobrem isso, logo abaixo dos presets:
+
+- **Iniciar monitoramento** publica sem parar no leito selecionado, com **Intervalo entre leituras**
+  e **Escalada até crítico** (rápido 30 s · normal 1 min 30 s · lento 3 min) configuráveis. Os
+  números mudam a cada leitura e a gravidade sobe sozinha, atravessando **baixa → média → alta**.
+- **Modo enfermaria (todos os leitos)** liga um monitor em **cada leito ocupado** de uma vez e fica
+  armado: quem for internado depois entra sozinho. O gatilho é o próprio evento de leito que já
+  chega por SSE — não há *polling*. **Um** paciente evolui e os demais ficam estáveis, porque todo
+  mundo piorando junto não acontece num hospital e apaga o efeito: o que se quer ver é **um card
+  ficando vermelho no meio de uma parede verde**.
+
+As três ações são distintas e não se atrapalham: **Desarmar modo enfermaria** só impede novas
+internações de entrarem sozinhas (os monitores em curso continuam), **Parar todos** interrompe as
+coletas, e a **Sequência de deterioração** assume o leito escolhido parando o contínuo dele. Para a
+apresentação, o caminho mais confortável é ligar o Modo enfermaria no começo e falar sobre
+arquitetura enquanto o mural ganha vida sozinho.
 
 **5. Preset `Fora de faixa` — a DLQ sem retentativa.** Ainda em `3 Publicar sinais vitais`, clique em
 **Fora de faixa** (SpO₂ 20). A borda **aceita** com `202`, porque 20 é um inteiro válido de 0 a 100 na
@@ -655,7 +680,33 @@ docker compose start admission-service
 HTTP 504 em 5.011218s
 ```
 
-#### 6.9 Os quatro cenários do simulador
+#### 6.9 Os cenários do simulador
+
+##### `plantao` — o paciente que evolui sozinho
+
+Além dos quatro cenários exigidos pelo enunciado, há o **`plantao`**: em vez de uma trajetória
+finita, o paciente tem uma **gravidade interna** que sobe de 0 a 1 no horizonte de `--escalada`, com
+os sete parâmetros interpolados entre um extremo saudável e um grave e ruído por cima, de modo que
+os números mudam a cada leitura. Sem `--duracao` ele roda até `Ctrl+C`.
+
+```bash
+# 3 min até crítico, roda até Ctrl+C
+.venv/bin/python -m clients.bedside_monitor --cenario plantao
+
+# comprimido em 40 s — bom para ensaiar
+.venv/bin/python -m clients.bedside_monitor --cenario plantao --escalada 40
+
+# 5 leitos, cada um com ritmo ±22% diferente (a enfermaria inteira, pelo terminal)
+.venv/bin/python -m clients.bedside_monitor --cenario plantao --leitos 5
+```
+
+Medido ao vivo com `--escalada 40`: NEWS2 `0 → 1 → 3 → 4 → 7 → 11 → 16`, atravessando
+**baixa → média → alta** sem regressão de banda e sem nenhuma leitura recusada por faixa
+fisiológica. O ruído fica só em pressão sistólica e frequência cardíaca — os dois parâmetros com
+faixa larga na tabela NEWS2; em FR, SpO₂ e temperatura as faixas são estreitas e o ruído fazia o
+escore recuar, piscando o card no meio da escalada.
+
+##### Os quatro cenários do enunciado
 
 O simulador é determinístico por semente (`SEMENTE_SIMULADOR`): mesma semente, mesma sequência.
 
