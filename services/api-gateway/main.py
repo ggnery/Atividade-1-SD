@@ -167,12 +167,31 @@ class MiddlewareBorda:
 
 
 def _correlation_id_de(scope: Scope) -> str | None:
-    """Le ``X-Correlation-ID`` dos cabecalhos ASGI brutos (bytes), se presente (R5.2)."""
+    """Le e valida ``X-Correlation-ID`` dos cabecalhos ASGI brutos (bytes), se presente (R5.2).
+
+    O valor precisa ser um UUID: ele viaja no Envelope e termina nas colunas ``uuid`` da marca de
+    idempotencia e da Trilha_de_Auditoria (secao 7.4). Um valor livre quebraria o consumidor la na
+    ponta, longe de quem o enviou.
+
+    Cabecalho malformado e **descartado**, nao rejeitado: a correlacao e metadado de diagnostico, e
+    derrubar uma escrita clinica por causa dela seria trocar um problema de observabilidade por uma
+    falha assistencial. O chamador recebe na resposta o ``X-Correlation-ID`` que de fato valeu, e o
+    descarte fica registrado no log.
+    """
     for chave, valor in scope.get("headers", ()):
         if chave == b"x-correlation-id":
             texto = valor.decode("latin-1").strip()
-            if texto:
-                return texto
+            if not texto:
+                return None
+            try:
+                return str(uuid.UUID(texto))
+            except ValueError:
+                _log.warning(
+                    "correlacao.descartada",
+                    motivo="nao_e_uuid",
+                    recebido=texto[:64],
+                )
+                return None
     return None
 
 
