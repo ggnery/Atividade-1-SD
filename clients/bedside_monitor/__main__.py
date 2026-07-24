@@ -38,7 +38,9 @@ except ImportError:  # rodado como script solto: python clients/bedside_monitor/
 # Padroes globais quando nem a flag, nem o ambiente, nem o cenario fixam o valor (design 12.4.2).
 _GATEWAY_URL_PADRAO = "http://localhost:8000"  # fora do Compose; no Compose vira api-gateway:8000
 _SEMENTE_PADRAO = 20260727  # SEMENTE_SIMULADOR (design 12.4.2)
-_PREFIXO_LEITO_TEMPESTADE = "L"  # leitos L-01, L-02, ... na tempestade
+# A tempestade usa a enfermaria: o seed (db/seed.sql) tem ENF-01..ENF-10, entao
+# --leitos ate 10 gera codigos que existem de verdade.
+_PREFIXO_LEITO_TEMPESTADE = "ENF"
 
 
 def _construir_parser() -> argparse.ArgumentParser:
@@ -71,7 +73,10 @@ def _construir_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help="numero de leitos publicando em paralelo (cenario tempestade). Gera L-01..L-NN.",
+        help=(
+            "numero de leitos publicando em paralelo (cenario tempestade). "
+            "Gera ENF-01..ENF-NN; o seed vai ate ENF-10."
+        ),
     )
     parser.add_argument(
         "--intervalo",

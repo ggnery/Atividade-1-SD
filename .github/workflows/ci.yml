@@ -1,0 +1,196 @@
+# Integracao continua do trabalho de Sistemas Distribuidos -- G3, Hospital Inteligente.
+#
+# Quatro jobs independentes, executados em paralelo:
+#
+#   lint   -> ruff check e ruff format --check sobre hospitalmq, services, clients e tests
+#   tipos  -> mypy; o pyproject fixa files = ["hospitalmq"], ou seja, rigor maximo (strict)
+#             apenas no artefato avaliado, o middleware escrito pelo grupo
+#   testes -> pytest tests/unit com cobertura, publicando o relatorio no sumario do job
+#   build  -> docker compose config e build das duas imagens; a stack NAO sobe aqui
+#
+# O nivel e2e (tests/e2e) fica de fora de proposito: ele exige RabbitMQ, PostgreSQL e os
+# seis servicos de pe, o que no docker-compose.yml corresponde ao perfil "test". O modo de
+# rodar esse nivel na maquina esta descrito no CONTRIBUTING.md.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Um push novo no mesmo ref cancela a execucao anterior ainda em andamento.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 3.12 e o piso declarado no pyproject (requires-python = ">=3.12") e tambem a base
+  # da imagem Docker (python:3.12-slim). CI e producao usam a mesma minor.
+  PYTHON_VERSION: "3.12"
+  # Versao do uv com que esta pipeline foi conferida localmente antes de ser escrita.
+  UV_VERSION: "0.11.8"
+  # Os tres jobs Python instalam os mesmos extras, por dois motivos concretos:
+  #   - "dominio" traz sqlalchemy, sem o qual o mypy nao resolve os imports de
+  #     hospitalmq/{publisher,idempotency,rpc}.py e acusa import-not-found;
+  #   - "borda" + "dominio" sao necessarios porque tests/unit importa modulos de
+  #     services/ (modelos SQLAlchemy e handlers) por caminho dinamico.
+  EXTRAS: "borda,dominio,dev"
+
+jobs:
+  # --------------------------------------------------------------------------- #
+  # 1. Lint                                                                       #
+  # --------------------------------------------------------------------------- #
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Instalar uv e criar a venv Python ${{ env.PYTHON_VERSION }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          # cria .venv e a deixa no PATH dos passos seguintes, entao ruff/mypy/pytest
+          # sao chamados direto, sem "uv run" (que tentaria re-sincronizar o projeto).
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Instalar o projeto e as ferramentas
+        run: uv pip install -e ".[${{ env.EXTRAS }}]"
+
+      - name: ruff check
+        run: ruff check hospitalmq services clients tests
+
+      - name: ruff format --check
+        run: ruff format --check hospitalmq services clients tests
+
+  # --------------------------------------------------------------------------- #
+  # 2. Tipos                                                                      #
+  # --------------------------------------------------------------------------- #
+  tipos:
+    name: Tipos (mypy strict em hospitalmq)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Instalar uv e criar a venv Python ${{ env.PYTHON_VERSION }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Instalar o projeto e as ferramentas
+        run: uv pip install -e ".[${{ env.EXTRAS }}]"
+
+      - name: mypy
+        # Sem argumentos de caminho: quem define o alvo e o pyproject
+        # ([tool.mypy] strict = ..., files = ["hospitalmq"]). Passar caminhos aqui
+        # abriria espaco para CI e maquina local checarem conjuntos diferentes.
+        run: mypy
+
+  # --------------------------------------------------------------------------- #
+  # 3. Testes de unidade                                                          #
+  # --------------------------------------------------------------------------- #
+  testes:
+    name: Testes de unidade (pytest + cobertura)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Instalar uv e criar a venv Python ${{ env.PYTHON_VERSION }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Instalar o projeto e as ferramentas
+        run: uv pip install -e ".[${{ env.EXTRAS }}]"
+
+      - name: pytest tests/unit
+        # `--cov` sem argumento usa o [tool.coverage.run] do pyproject
+        # (source = hospitalmq, services, clients; branch = true; sqs.py omitido).
+        # Nao ha limiar de cobertura: o numero e publicado para leitura, nao usado
+        # como porta de qualidade -- services/*/main.py, por exemplo, so e exercitado
+        # no nivel e2e, que nao roda aqui.
+        run: |
+          pytest tests/unit \
+            --cov \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml:coverage.xml \
+            --junitxml=junit.xml
+
+      - name: Publicar resumo da cobertura
+        if: always()
+        run: |
+          {
+            echo "## Testes de unidade"
+            echo
+            echo "Comando: \`pytest tests/unit --cov\`"
+            echo
+            echo "Cobertura medida sobre \`hospitalmq\`, \`services\` e \`clients\`, conforme"
+            echo "\`[tool.coverage.run]\` do \`pyproject.toml\`. Arquivos com 100% sao omitidos."
+            echo "Os modulos \`main.py\` dos servicos aparecem baixos porque sao exercitados"
+            echo "no nivel e2e (perfil \`test\` do docker-compose.yml), fora desta pipeline."
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          coverage report --format=markdown --skip-covered >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Guardar relatorios como artefato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-e-junit
+          path: |
+            coverage.xml
+            junit.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  # --------------------------------------------------------------------------- #
+  # 4. Build da imagem                                                            #
+  # --------------------------------------------------------------------------- #
+  build:
+    name: Build da imagem (sem subir a stack)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Preparar o .env a partir do .env.example
+        # Tres servicos declaram `env_file: [.env]` e o .env e ignorado pelo git
+        # (.gitignore linha 151). Sem este passo, `docker compose config` falha com
+        # "env file .env not found". O .env.example contem os valores de demonstracao.
+        run: cp .env.example .env
+
+      - name: Validar o docker-compose.yml
+        run: |
+          docker compose config -q
+          docker compose --profile test config --services
+
+      - name: Build das duas imagens (perfis borda e dominio)
+        # O Dockerfile e unico e o ARG PERFIL decide o grupo de extras instalado.
+        # api-gateway constroi hospital-g3/app:borda e admission-service constroi
+        # hospital-g3/app:dominio -- juntos cobrem as duas imagens que o compose usa.
+        # Nenhum container sobe: este job so prova que a imagem compila.
+        run: docker compose build api-gateway admission-service

@@ -52,7 +52,7 @@ USUARIOS_DEMO: Final[dict[str, tuple[str, str]]] = {
     description=(
         "Valida usuario e senha contra a tabela de demonstracao e devolve um JWT HS256 (R4.1). "
         "Grava tambem o cookie `hmq_session` usado pelo stream do painel. Credenciais ficticias, "
-        "ex.: `{\"usuario\": \"enf.ana\", \"senha\": \"demo123\"}`."
+        'ex.: `{"usuario": "enf.ana", "senha": "demo123"}`.'
     ),
 )
 async def emitir_token(

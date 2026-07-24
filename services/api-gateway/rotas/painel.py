@@ -148,9 +148,7 @@ async def painel_css() -> FileResponse:
 @router.get("/painel/painel.js", include_in_schema=False)
 async def painel_js() -> FileResponse:
     """Script do painel: ``EventSource``, render dos cards e reconexao (ativo estatico, R11.6)."""
-    return FileResponse(
-        _STATIC / "painel.js", media_type="application/javascript; charset=utf-8"
-    )
+    return FileResponse(_STATIC / "painel.js", media_type="application/javascript; charset=utf-8")
 
 
 # --------------------------------------------------------------------------- #

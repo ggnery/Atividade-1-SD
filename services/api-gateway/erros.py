@@ -198,9 +198,7 @@ async def _tratar_rpc_remoto(request: Request, exc: RpcRemoteError) -> JSONRespo
     slug, title = SLUG_POR_CODIGO.get(exc.codigo, ("erro-interno", "Erro interno"))
     retry = _RETRY_APOS_S if status in (503, 504) else None
     detalhe = exc.mensagem if status != 500 else "erro interno no servico de destino"
-    _log.warning(
-        "http.erro_remoto", codigo=exc.codigo, operacao=exc.operacao, status=status
-    )
+    _log.warning("http.erro_remoto", codigo=exc.codigo, operacao=exc.operacao, status=status)
     return problem_json(
         request, status=status, slug=slug, title=title, detail=detalhe, retry_after=retry
     )

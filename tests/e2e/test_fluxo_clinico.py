@@ -74,9 +74,7 @@ def cliente() -> httpx.Client:
 @pytest.fixture(scope="module")
 def token_enfermeiro(cliente: httpx.Client) -> str:
     """JWT de ``enf.ana`` (papel ``enfermeiro``) -- passo (c) do roteiro."""
-    resposta = cliente.post(
-        "/auth/token", json={"usuario": "enf.ana", "senha": "demo123"}
-    )
+    resposta = cliente.post("/auth/token", json={"usuario": "enf.ana", "senha": "demo123"})
     assert resposta.status_code == 200, resposta.text
     corpo = resposta.json()
     assert corpo["role"] == "enfermeiro"
@@ -177,9 +175,7 @@ def test_f_admite_paciente_201(
 
 
 @pytest.mark.requisito("R6.1")
-def test_g_publica_sinais_estaveis_202(
-    cliente: httpx.Client, contexto: dict[str, Any]
-) -> None:
+def test_g_publica_sinais_estaveis_202(cliente: httpx.Client, contexto: dict[str, Any]) -> None:
     """(g) ``POST /sinais`` com ``X-API-Key`` de dispositivo, paciente estavel -> ``202``."""
     resposta = cliente.post(
         "/sinais",
@@ -271,12 +267,8 @@ def test_j_leitos_mostra_leito_ocupado(
     contexto: dict[str, Any],
 ) -> None:
     """(j) ``GET /leitos`` -> ``200`` e o leito da internacao aparece ocupado na projecao."""
-    resposta = cliente.get(
-        "/leitos", headers={"Authorization": f"Bearer {token_enfermeiro}"}
-    )
+    resposta = cliente.get("/leitos", headers={"Authorization": f"Bearer {token_enfermeiro}"})
     assert resposta.status_code == 200, resposta.text
     corpo = resposta.json()
-    codigos = {
-        item.get("leito_id") or item.get("codigo") for item in corpo.get("itens", [])
-    }
+    codigos = {item.get("leito_id") or item.get("codigo") for item in corpo.get("itens", [])}
     assert contexto["leito_id"] in codigos

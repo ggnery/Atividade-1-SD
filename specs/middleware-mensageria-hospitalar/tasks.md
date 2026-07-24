@@ -131,15 +131,15 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - `.env.example`, `infra/rabbitmq.conf`, `scripts/token.sh` e `scripts/trace.sh`
   - _Requirements: R10.1, R7.2_
 
-- [ ] 9. Suíte de testes
-- [ ] 9.1 Unidade e contrato
+- [x] 9. Suíte de testes
+- [x] 9.1 Unidade e contrato
   - Tabela normativa NEWS2 parâmetro a parâmetro com os limites de cada faixa, regra do componente isolado, mapeamento score → severidade
   - Idempotência, sequência de espera 1s/2s/4s com relógio simulado, DLQ exatamente após a terceira retentativa
   - `RpcTimeoutError` com limpeza da future, duas chamadas concorrentes recebendo cada uma a sua resposta
   - Bateria de conformidade parametrizada rodando contra `MemoryTransport` e `AmqpTransport`
   - _Requirements: R2.2, R2.3, R2.4, R3.3, R3.5, R6.2, R6.3, R10.3_
 
-- [ ] 9.2 Integração e API
+- [x] 9.2 Integração e API
   - 401 sem token, 401 com token expirado, 403 com papel insuficiente
   - Erro em `application/problem+json` com `correlation_id`; 504 no timeout de RPC; `/health` respondendo com o broker fora
   - Sinal vital fora da faixa indo à DLQ; audit-service capturando evento de tipo desconhecido pelo `#`
@@ -151,13 +151,13 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - Subir o ambiente, esperar prontidão por healthcheck, exercitar o fluxo clínico completo e encerrar
   - _Requirements: R10.1, R10.4_
 
-- [ ] 10. Checkpoint — sistema completo
+- [x] 10. Checkpoint — sistema completo
   - `docker compose up` a partir de clone limpo, sem passo manual
   - Suíte inteira verde; cobertura do pacote `hospitalmq/` medida
   - Percorrer o roteiro de demonstração de §12.6 de ponta a ponta
   - _Requirements: R10.1, R10.3, R10.4, R10.6_
 
-- [ ] 11. Documentação de entrega
+- [x] 11. Documentação de entrega
   - `README.md` com pré-requisitos, execução, credenciais de teste, roteiro da demonstração e exemplos de chamadas
   - `docs/arquitetura.md`: versão condensada do design para entrega ao professor, com os diagramas principais e os ADRs em anexo
   - `.github/workflows/ci.yml` com lint, testes e build da imagem

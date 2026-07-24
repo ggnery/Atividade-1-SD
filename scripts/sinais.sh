@@ -11,7 +11,7 @@
 #   * o campo de saturacao chama-se `saturacao_o2` (nao `saturacao`).
 #
 # Uso:
-#   ./scripts/sinais.sh                          # L-07 com a API Key dev-monitor-l07
+#   ./scripts/sinais.sh                          # UTI-01 com a API Key dev-monitor-l07
 #   ./scripts/sinais.sh UTI-03 dev-monitor-uti03 # outro leito/chave
 #
 # Variaveis:
@@ -19,8 +19,11 @@
 set -euo pipefail
 
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:8000}"
-LEITO="${1:-L-07}"
+LEITO="${1:-UTI-01}"
 API_KEY="${2:-dev-monitor-l07}"
+
+# coletado_em e obrigatorio no contrato de POST /sinais (schemas.SinaisVitaisRequest).
+COLETADO_EM="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 HDRS="$(mktemp)"
 trap 'rm -f "${HDRS}"' EXIT
@@ -36,7 +39,8 @@ CORPO=$(cat <<JSON
   "temperatura": 38.4,
   "pressao_sistolica": 96,
   "frequencia_cardiaca": 122,
-  "nivel_consciencia": "A"
+  "nivel_consciencia": "A",
+  "coletado_em": "${COLETADO_EM}"
 }
 JSON
 )

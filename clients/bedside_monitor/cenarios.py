@@ -91,13 +91,14 @@ CENARIOS: Final[dict[Cenario, DefinicaoCenario]] = {
     ),
     Cenario.DETERIORACAO: DefinicaoCenario(
         perfil=Perfil.DETERIORACAO,
-        leito_padrao="L-07",
+        leito_padrao="UTI-02",
         api_key_padrao="dev-monitor-l07",
         intervalo_s=5.0,
         passos=10,
         criterio_r10_6="paciente em deterioracao",
         narrativa=(
-            "Leito L-07: SpO2 caindo e FR/FC subindo a cada leitura. No 7o passo o NEWS2 agregado "
+            "Leito UTI-02: SpO2 caindo e FR/FC subindo a cada leitura. No 7o passo o NEWS2 "
+            "agregado "
             "passa de 5, o card fica vermelho e o alerta entra no topo da lista do painel. Com a "
             "mesma semente, o cruzamento acontece sempre no mesmo instante."
         ),
@@ -131,7 +132,7 @@ CENARIOS: Final[dict[Cenario, DefinicaoCenario]] = {
     ),
     Cenario.TEMPESTADE: DefinicaoCenario(
         perfil=Perfil.ESTAVEL,
-        leito_padrao="L-01",
+        leito_padrao="ENF-01",
         api_key_padrao="dev-monitor-l07",
         intervalo_s=0.5,
         passos=20,
