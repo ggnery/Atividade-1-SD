@@ -157,6 +157,15 @@ jobs:
           coverage report --format=markdown --skip-covered >> "$GITHUB_STEP_SUMMARY"
 
       - name: Guardar relatorios como artefato
+        # Passo de CONVENIENCIA, nao porta de qualidade: o numero de cobertura ja foi
+        # publicado no resumo do job no passo anterior, e o veredito dos testes e o
+        # `pytest` acima. O upload depende do blob storage de artefatos do GitHub, que
+        # ja devolveu `403 Forbidden` no FinalizeArtifact de forma transitoria (o mesmo
+        # commit passou ao ser reexecutado sem nenhuma alteracao). Reprovar a CI inteira
+        # por instabilidade de infraestrutura de terceiro seria um falso negativo.
+        # NAO confundir com mascarar defeito nosso: se `ruff`, `mypy` ou `pytest`
+        # falharem, o job reprova.
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@v4
         with:
