@@ -15,16 +15,12 @@
 
 <!-- PREENCHER: integrantes do G3 -->
 
-| Nome completo | Matrícula | Papel na apresentação |
-|---|---|---|
-| (preencher) | (preencher) | (preencher) |
-| (preencher) | (preencher) | (preencher) |
-| (preencher) | (preencher) | (preencher) |
+- Carlos Alberto Rodrigues
+- Gabriel Nery
+- Giordana Bucci
+- Gustavo Valadares
+- Luiz Felipe Belisário
 
-> Os nomes dos integrantes ainda não foram informados ao autor deste arquivo. A tabela acima é o
-> único ponto do repositório que os exige e precisa ser preenchida antes da entrega.
-
----
 
 ## 1. O que é isto
 
