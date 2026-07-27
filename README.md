@@ -13,14 +13,18 @@
 
 ### Integrantes
 
-<!-- PREENCHER: integrantes do G3 -->
+| Nome completo | Matrícula | Papel na apresentação |
+|---|---|---|
+| Gabriel Nery da Silva Espindola | 202200509 | a definir |
+| Giordana de Farias Franco Bueno Bucci | 202200513 | a definir |
+| Gustavo Henrique Valadares | 202205539 | a definir |
+| Carlos Alberto Rodrigues da Silva Junior | 202200498 | a definir |
+| Luiz Felipe Belisário Macedo | 202200538 | a definir |
 
-- Carlos Alberto Rodrigues
-- Gabriel Nery
-- Giordana Bucci
-- Gustavo Valadares
-- Luiz Felipe Belisário
+> A divisão dos papéis na apresentação ainda não foi fechada pelo grupo — é o único campo pendente
+> desta tabela.
 
+---
 
 ## 1. O que é isto
 

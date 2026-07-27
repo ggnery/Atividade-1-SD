@@ -105,8 +105,12 @@ só deve ser mesclado com os quatro verdes.
 ajusta ao documento, não o contrário. Divergência encontrada durante a implementação vira issue
 antes de virar commit.
 
-<!-- PREENCHER: integrantes do G3 -->
+## Integrantes
 
-| Integrante | Papel |
-| --- | --- |
-| (preencher) | (preencher) |
+| Integrante | Matrícula | Papel |
+| --- | --- | --- |
+| Gabriel Nery da Silva Espindola | 202200509 | a definir |
+| Giordana de Farias Franco Bueno Bucci | 202200513 | a definir |
+| Gustavo Henrique Valadares | 202205539 | a definir |
+| Carlos Alberto Rodrigues da Silva Junior | 202200498 | a definir |
+| Luiz Felipe Belisário Macedo | 202200538 | a definir |

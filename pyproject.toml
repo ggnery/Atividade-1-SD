@@ -8,7 +8,13 @@ version = "0.1.0"
 description = "Middleware de mensageria do Hospital Inteligente (G3): Envelope, retentativa, idempotencia, RPC sobre fila e transporte plugavel"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "Grupo G3 - Sistemas Distribuidos" }]
+authors = [
+  { name = "Gabriel Nery da Silva Espindola" },
+  { name = "Giordana de Farias Franco Bueno Bucci" },
+  { name = "Gustavo Henrique Valadares" },
+  { name = "Carlos Alberto Rodrigues da Silva Junior" },
+  { name = "Luiz Felipe Belisario Macedo" },
+]
 keywords = ["middleware", "mensageria", "amqp", "rabbitmq", "sistemas-distribuidos"]
 classifiers = [
   "Programming Language :: Python :: 3.12",

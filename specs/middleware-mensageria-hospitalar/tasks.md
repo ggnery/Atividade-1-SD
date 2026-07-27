@@ -163,9 +163,9 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
   - `.github/workflows/ci.yml` com lint, testes e build da imagem
   - _Requirements: R10.2, R10.5_
 
-- [x]* 12. Slides da apresentação
+- [x] 12. Slides da apresentação
   - Estrutura de 15 minutos seguindo o roteiro de §12.6
-  - Depende dos nomes dos integrantes do G3
+  - Nomes e matrículas dos cinco integrantes na capa e no encerramento
   - _Requirements: R10.5_
 
 ---
@@ -174,5 +174,8 @@ Ambiente verificado nesta máquina: Docker 29.4.1 com daemon ativo, Compose v5.1
 
 | # | Pendência | Bloqueia |
 |---|-----------|----------|
-| 1 | Nomes dos integrantes do G3 | Marcador `PREENCHER` no README e em 2 slides |
+| 1 | — | _Resolvido: os cinco integrantes do G3 estão no README, em `docs/arquitetura.md`, no `CONTRIBUTING.md`, no `pyproject.toml` e nos 2 slides_ |
 | 2 | — | _Resolvido: remote `git@github.com:ggnery/Atividade-1-SD.git` já existe_ |
+
+Resta apenas a divisão dos papéis da apresentação entre os integrantes (coluna "Papel" marcada como
+`a definir`) — não bloqueia a entrega do código nem da documentação.

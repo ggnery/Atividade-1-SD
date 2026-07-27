@@ -301,8 +301,12 @@ se atualiza sozinha, para que eu perceba a deterioração de um paciente sem pre
 
 ## Pontos em aberto
 
-1. **Composição do grupo** — o README e os slides precisam dos nomes dos integrantes do G3.
-2. **Repositório GitHub** — confirmar se o repositório remoto já existe ou se deve ser criado.
+1. **Divisão dos papéis na apresentação** — os cinco integrantes já constam do README, de
+   `docs/arquitetura.md` e dos slides; falta distribuir os blocos do deck entre eles.
 
 _Resolvido em 23/07: stack Python 3.12 + FastAPI + RabbitMQ + PostgreSQL (C2) e demonstração com
 Painel_de_Leitos ao vivo (R11)._
+
+_Resolvido em 26/07: composição do grupo — cinco integrantes com nome e matrícula no `README.md`,
+em `docs/arquitetura.md`, no `CONTRIBUTING.md`, no `pyproject.toml` e nos slides de capa e
+encerramento; repositório remoto `git@github.com:ggnery/Atividade-1-SD.git` confirmado._

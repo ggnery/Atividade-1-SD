@@ -14,11 +14,13 @@
 
 **Integrantes do grupo G3**
 
-<!-- PREENCHER: integrantes do G3 -->
-
 | Nome | Matrícula | Papel principal no trabalho |
 |---|---|---|
-| (preencher) | (preencher) | (preencher) |
+| Gabriel Nery da Silva Espindola | 202200509 | a definir |
+| Giordana de Farias Franco Bueno Bucci | 202200513 | a definir |
+| Gustavo Henrique Valadares | 202205539 | a definir |
+| Carlos Alberto Rodrigues da Silva Junior | 202200498 | a definir |
+| Luiz Felipe Belisário Macedo | 202200538 | a definir |
 
 ---
 
